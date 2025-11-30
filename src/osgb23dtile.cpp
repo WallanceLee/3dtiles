@@ -1,6 +1,7 @@
 #include <osg/Material>
 #include <osg/PagedLOD>
 #include <osgDB/ReadFile>
+#include <osgDB/Registry>
 #include <osgDB/ConvertUTF>
 #include <osgUtil/Optimizer>
 #include <osgUtil/SmoothingVisitor>
@@ -35,6 +36,9 @@ using namespace std;
 #ifdef min
 #undef min
 #endif // max
+
+// 引入osg插件和序列化
+USE_OSGPLUGIN(osg)
 
 static bool b_pbr_texture = false;
 // Add KTX2 compression flag

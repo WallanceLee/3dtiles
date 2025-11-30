@@ -72,6 +72,7 @@ if (OpenSceneGraph_FOUND)
         osgDB
         osgUtil
         OpenThreads
+        osgdb_osg
     )
     target_include_directories(_3dtile PUBLIC ${OSG_INCLUDE_DIR})
 endif()

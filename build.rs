@@ -42,6 +42,9 @@ fn build_win_msvc() {
     println!("cargo:rustc-link-lib=osgUtil");
     println!("cargo:rustc-link-lib=osgDB");
     println!("cargo:rustc-link-lib=osg");
+    let osg_plugins_lib = vcpkg_installed_lib_dir.join("osgPlugins-3.6.5");
+    println!("cargo:rustc-link-search=native={}", osg_plugins_lib.display());
+    println!("cargo:rustc-link-lib=osgdb_osg");
 
     // 3. OpenThreads (依赖 _3dtile)
     println!("cargo:rustc-link-lib=OpenThreads");
