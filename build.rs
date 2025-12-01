@@ -44,6 +44,8 @@ fn build_win_msvc() {
     println!("cargo:rustc-link-lib=osg");
     let osg_plugins_lib = vcpkg_installed_lib_dir.join("osgPlugins-3.6.5");
     println!("cargo:rustc-link-search=native={}", osg_plugins_lib.display());
+    // Note: osgdb_osg must be explicitly linked for Rust linker even though USE_OSGPLUGIN(osg) is used
+    println!("cargo:rustc-link-lib=osgdb_osg");
 
     // 3. OpenThreads (依赖 _3dtile)
     println!("cargo:rustc-link-lib=OpenThreads");
@@ -121,6 +123,7 @@ fn build_linux_unknown() {
     println!("cargo:rustc-link-lib=pthread");
 
     println!("cargo:rustc-link-lib=osgdb_jpeg");
+    println!("cargo:rustc-link-lib=osgdb_osg");
     println!("cargo:rustc-link-lib=osgdb_serializers_osg");
     println!("cargo:rustc-link-lib=osgUtil");
     println!("cargo:rustc-link-lib=osgDB");
@@ -224,6 +227,7 @@ fn build_macos() {
     // 2. OSG
     // println!("cargo:rustc-link-lib=osgdb_jp2");
     println!("cargo:rustc-link-lib=osgdb_jpeg");
+    println!("cargo:rustc-link-lib=osgdb_osg");
     println!("cargo:rustc-link-lib=osgdb_serializers_osg");
     println!("cargo:rustc-link-lib=osgUtil");
     println!("cargo:rustc-link-lib=osgDB");
@@ -339,6 +343,7 @@ fn build_macos_x86_64() {
 
     // 2. OSG
     // println!("cargo:rustc-link-lib=osgdb_jp2");
+    println!("cargo:rustc-link-lib=osgdb_osg");
     println!("cargo:rustc-link-lib=osgdb_jpeg");
     println!("cargo:rustc-link-lib=osgdb_serializers_osg");
     println!("cargo:rustc-link-lib=osgUtil");
