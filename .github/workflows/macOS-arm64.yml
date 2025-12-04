@@ -24,7 +24,7 @@ jobs:
         doNotCache: false
         vcpkgGitCommitId: 'd5182f703b51d7b258f83f94d936ac03488dcdbe'
 
-    - name: Install automake (including aclocal)
+    - name: Install automake and libtool (including aclocal)
       run: brew install automake libtool
 
     - name: Install Rust toolchain
