@@ -57,35 +57,61 @@ glm::dvec3 GeoTransform::CartographicToEcef(double lnt, double lat, double heigh
 
 void GeoTransform::Init(OGRCoordinateTransformation *pOgrCT, double *Origin)
 {
-    // Use smart pointer to manage coordinate transformation object, automatically releases old resources
     GeoTransform::pOgrCT.reset(pOgrCT);
     GeoTransform::OriginX = Origin[0];
     GeoTransform::OriginY = Origin[1];
     GeoTransform::OriginZ = Origin[2];
-    GeoTransform::IsENU = false;  // Default to non-ENU, will be set by SetGeographicOrigin if ENU
+    GeoTransform::IsENU = false;
 
     glm::dvec3 origin = { GeoTransform::OriginX, GeoTransform::OriginY, GeoTransform::OriginZ };
     glm::dvec3 origin_cartographic = origin;
-    // Log ENU origin before transform
     fprintf(stderr, "[GeoTransform] ENU origin: x=%.8f y=%.8f z=%.3f\n", origin.x, origin.y, origin.z);
 
-    // Use get() to obtain raw pointer for coordinate transformation
     if (GeoTransform::pOgrCT)
     {
         GeoTransform::pOgrCT->Transform(1, &origin_cartographic.x, &origin_cartographic.y, &origin_cartographic.z);
     }
 
-    // Log cartographic origin after transform (degrees)
     fprintf(stderr, "[GeoTransform] Cartographic origin: lon=%.10f lat=%.10f h=%.3f\n", origin_cartographic.x, origin_cartographic.y, origin_cartographic.z);
 
-    // For EPSG systems, use the transformed cartographic origin
-    // For ENU systems, this will be overridden by SetGeographicOrigin()
     GeoTransform::GeoOriginLon = origin_cartographic.x;
     GeoTransform::GeoOriginLat = origin_cartographic.y;
     GeoTransform::GeoOriginHeight = origin_cartographic.z;
 
     glm::dmat4 EnuToEcefMatrix = GeoTransform::CalcEnuToEcefMatrix(origin_cartographic.x, origin_cartographic.y, origin_cartographic.z);
     GeoTransform::EcefToEnuMatrix = glm::inverse(EnuToEcefMatrix);
+
+    GeoTransform::GlobalInitialized_ = true;
+}
+
+void GeoTransform::EnsureThreadTransform()
+{
+    if (GeoTransform::pOgrCT) return;
+    if (!GeoTransform::GlobalInitialized_) return;
+    if (GeoTransform::IsENU) return;
+
+    OGRSpatialReference outRs;
+    outRs.importFromEPSG(4326);
+    outRs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+    OGRSpatialReference inRs;
+    if (GeoTransform::SourceEPSG_ > 0) {
+        inRs.importFromEPSG(GeoTransform::SourceEPSG_);
+        inRs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    } else if (!GeoTransform::SourceWKT_.empty()) {
+        inRs.importFromWkt(GeoTransform::SourceWKT_.c_str());
+        inRs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    } else {
+        return;
+    }
+
+    OGRCoordinateTransformation* poCT = OGRCreateCoordinateTransformation(&inRs, &outRs);
+    if (poCT) {
+        GeoTransform::pOgrCT.reset(poCT);
+        fprintf(stderr, "[GeoTransform] Worker thread: created per-thread OGR transform\n");
+    } else {
+        fprintf(stderr, "[GeoTransform] Worker thread: FAILED to create OGR transform\n");
+    }
 }
 
 void GeoTransform::SetGeographicOrigin(double lon, double lat, double height)
