@@ -57,3 +57,11 @@ pub extern "C" fn mkdirs(path: *const libc::c_char) -> bool {
         }
     }
 }
+
+extern "C" {
+    pub fn init_geoid(model: *const libc::c_char, geoid_path: *const libc::c_char) -> bool;
+    pub fn get_geoid_height(lat: f64, lon: f64) -> f64;
+    pub fn orthometric_to_ellipsoidal(lat: f64, lon: f64, orthometric_height: f64) -> f64;
+    pub fn ellipsoidal_to_orthometric(lat: f64, lon: f64, ellipsoidal_height: f64) -> f64;
+    pub fn is_geoid_initialized() -> bool;
+}

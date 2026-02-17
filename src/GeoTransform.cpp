@@ -1,6 +1,35 @@
 #include "GeoTransform.h"
+#include "extern.h"
+#include "GeoidHeight.h"
 #include <cstdio>
 #include <glm/glm.hpp>
+
+// Geoid height conversion functions implementation
+extern "C" bool init_geoid(const char* model, const char* geoid_path) {
+    GeoidHeight::GeoidModel geoidModel = GeoidHeight::GeoidCalculator::StringToGeoidModel(std::string(model));
+    return GeoidHeight::InitializeGlobalGeoidCalculator(geoidModel, std::string(geoid_path));
+}
+
+extern "C" double get_geoid_height(double lat, double lon) {
+    auto height = GeoidHeight::GetGlobalGeoidCalculator().GetGeoidHeight(lat, lon);
+    return height.value_or(0.0);
+}
+
+extern "C" double orthometric_to_ellipsoidal(double lat, double lon, double orthometric_height) {
+    return GeoidHeight::GetGlobalGeoidCalculator().ConvertOrthometricToEllipsoidal(lat, lon, orthometric_height);
+}
+
+extern "C" double ellipsoidal_to_orthometric(double lat, double lon, double ellipsoidal_height) {
+    return GeoidHeight::GetGlobalGeoidCalculator().ConvertEllipsoidalToOrthometric(lat, lon, ellipsoidal_height);
+}
+
+extern "C" bool is_geoid_initialized() {
+    return GeoidHeight::GetGlobalGeoidCalculator().IsInitialized();
+}
+
+extern "C" double get_geo_origin_height() {
+    return GeoTransform::GeoOriginHeight;
+}
 
 glm::dmat4 GeoTransform::CalcEnuToEcefMatrix(double lnt, double lat, double height_min)
 {
@@ -74,11 +103,22 @@ void GeoTransform::Init(OGRCoordinateTransformation *pOgrCT, double *Origin)
 
     fprintf(stderr, "[GeoTransform] Cartographic origin: lon=%.10f lat=%.10f h=%.3f\n", origin_cartographic.x, origin_cartographic.y, origin_cartographic.z);
 
+    // Apply geoid height correction if geoid is initialized
+    // This converts orthometric height (e.g., China 1985) to ellipsoidal height (WGS84)
+    double final_height = origin_cartographic.z;
+    if (is_geoid_initialized()) {
+        double geoid_height = get_geoid_height(origin_cartographic.y, origin_cartographic.x);
+        double original_height = origin_cartographic.z;
+        final_height = orthometric_to_ellipsoidal(origin_cartographic.y, origin_cartographic.x, origin_cartographic.z);
+        fprintf(stderr, "[GeoTransform] Geoid correction applied: orthometric=%.3f + geoid=%.3f = ellipsoidal=%.3f\n",
+                original_height, geoid_height, final_height);
+    }
+
     GeoTransform::GeoOriginLon = origin_cartographic.x;
     GeoTransform::GeoOriginLat = origin_cartographic.y;
-    GeoTransform::GeoOriginHeight = origin_cartographic.z;
+    GeoTransform::GeoOriginHeight = final_height;
 
-    glm::dmat4 EnuToEcefMatrix = GeoTransform::CalcEnuToEcefMatrix(origin_cartographic.x, origin_cartographic.y, origin_cartographic.z);
+    glm::dmat4 EnuToEcefMatrix = GeoTransform::CalcEnuToEcefMatrix(origin_cartographic.x, origin_cartographic.y, final_height);
     GeoTransform::EcefToEnuMatrix = glm::inverse(EnuToEcefMatrix);
 
     GeoTransform::GlobalInitialized_ = true;

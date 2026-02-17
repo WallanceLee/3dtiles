@@ -50,6 +50,8 @@ extern "C" {
     #[allow(dead_code)]
     fn meter_to_longti(m: f64, lati: f64) -> f64;
 
+    pub fn get_geo_origin_height() -> f64;
+
 }
 
 #[derive(Debug)]

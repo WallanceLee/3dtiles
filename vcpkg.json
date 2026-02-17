@@ -27,6 +27,7 @@
         "zstd"
       ]
     },
+    "geographiclib",
     "glm",
     "meshoptimizer",
     "nlohmann-json",

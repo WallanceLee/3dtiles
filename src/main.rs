@@ -203,6 +203,19 @@ fn main() {
             .help("Set the altitude")
             .num_args(1),
         )
+        .arg(
+           Arg::new("geoid")
+            .long("geoid")
+            .help("Set the geoid model for height conversion (none, egm84, egm96, egm2008). Converts orthometric height (e.g., China 1985) to ellipsoidal height (WGS84)")
+            .value_parser(["none", "egm84", "egm96", "egm2008"])
+            .num_args(1),
+        )
+        .arg(
+           Arg::new("geoid-path")
+            .long("geoid-path")
+            .help("Set the path to geoid data files (egm96-5.pgm, etc.). Default: GEOGRAPHICLIB_GEOID_PATH env or /usr/local/share/GeographicLib/geoids")
+            .num_args(1),
+        )
         .get_matches();
 
     let input = matches
@@ -235,6 +248,14 @@ fn main() {
     let alt_val = matches
         .get_one::<String>("alt")
         .and_then(|s| s.parse::<f64>().ok());
+    let geoid_model = matches
+        .get_one::<String>("geoid")
+        .map(|s| s.as_str())
+        .unwrap_or("none");
+    let geoid_path = matches
+        .get_one::<String>("geoid-path")
+        .map(|s| s.as_str())
+        .unwrap_or("");
 
     // Parse feature flags
     let enable_draco = matches.get_flag("enable-draco");
@@ -257,6 +278,17 @@ fn main() {
     }
     if enable_lod {
         info!("LOD (Level of Detail) enabled with default configuration [1.0, 0.5, 0.25]");
+    }
+
+    // Initialize geoid calculator if geoid model is specified
+    if geoid_model != "none" {
+        info!("Initializing geoid model: {} with path: {}", geoid_model, if geoid_path.is_empty() { "default" } else { geoid_path });
+        let geoid_path_c = std::ffi::CString::new(geoid_path).unwrap_or_default();
+        let geoid_model_c = std::ffi::CString::new(geoid_model).unwrap_or_default();
+        let success = unsafe { fun_c::init_geoid(geoid_model_c.as_ptr(), geoid_path_c.as_ptr()) };
+        if !success {
+            error!("Failed to initialize geoid model: {}. Height conversion will be disabled.", geoid_model);
+        }
     }
 
     let in_path = std::path::Path::new(input);
@@ -476,16 +508,20 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
 
     // try parse metadata.xml
     let metadata_file = dir.join("metadata.xml");
+    info!("Looking for metadata.xml at: {:?}", metadata_file);
     if metadata_file.exists() {
+        info!("metadata.xml exists, reading...");
         // read and parse
         if let Ok(mut f) = File::open(&metadata_file) {
             let mut buffer = String::new();
             if let Ok(_) = f.read_to_string(&mut buffer) {
+                info!("metadata.xml content: {}", buffer);
                 //
                 match serde_xml_rs::from_str::<ModelMetadata>(buffer.as_str()) {
                     Ok(metadata) => {
-                    //println!("{:?}", metadata);
+                    info!("Parsed metadata.xml: SRS={}, SRSOrigin={}", metadata.SRS, metadata.SRSOrigin);
                         let v: Vec<&str> = metadata.SRS.split(":").collect();
+                        info!("SRS split result: {:?}", v);
                         if v.len() > 1 {
                             if v[0] == "ENU" {
                                 let v1: Vec<&str> = v[1].split(",").collect();
@@ -551,10 +587,12 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
                                                 // Apply SRSOrigin offset via the root tileset transform matrix
                                                 // (per-vertex Correction is skipped for ENU).
                                                 enu_offset = Some((offset_x, offset_y, offset_z));
-                                                origin_height = Some(0.0);
+                                                // Use the geoid-corrected height from GeoTransform (if geoid is initialized)
+                                                let geo_origin_height = unsafe { osgb::get_geo_origin_height() };
+                                                origin_height = Some(geo_origin_height);
 
                                                 info!("ENU SRSOrigin offset detected: x={}, y={}, z={}", offset_x, offset_y, offset_z);
-                                                info!("Using geographic origin for transform: lon={}, lat={}, h=0", center_x, center_y);
+                                                info!("Using geographic origin for transform: lon={}, lat={}, h={}", center_x, center_y, geo_origin_height);
                                             } else {
                                                 error!("Failed to parse SRSOrigin values");
                                             }
@@ -607,13 +645,11 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
                                             if osgb::epsg_convert(srs, pt.as_mut_ptr(), gdal_ptr, proj_ptr) {
                                                 center_x = pt[0];
                                                 center_y = pt[1];
-                                                // Store height from original SRSOrigin (pt[2] if available)
-                                                if pt.len() >= 3 {
-                                                    origin_height = Some(pt[2]);
-                                                    info!("epsg: x->{}, y->{}, h={}", pt[0], pt[1], pt[2]);
-                                                } else {
-                                                    info!("epsg: x->{}, y->{}", pt[0], pt[1]);
-                                                }
+                                                // Use the geoid-corrected height from GeoTransform (if geoid is initialized)
+                                                // This handles the conversion from orthometric height (China 1985) to ellipsoidal height (WGS84)
+                                                let geo_origin_height = osgb::get_geo_origin_height();
+                                                origin_height = Some(geo_origin_height);
+                                                info!("epsg: x->{}, y->{}, h={} (geoid-corrected from original h={})", pt[0], pt[1], geo_origin_height, pt[2]);
                                             } else {
                                                 error!("epsg convert failed!");
                                             }

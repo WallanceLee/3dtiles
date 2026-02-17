@@ -213,7 +213,11 @@ public:
                     // For EPSG: Original logic - add projected origin and transform
                     glm::dvec3 cartographic = Point + glm::dvec3(GeoTransform::OriginX, GeoTransform::OriginY, GeoTransform::OriginZ);
                     poCT->Transform(1, &cartographic.x, &cartographic.y, &cartographic.z);
-                    glm::dvec3 ecef = GeoTransform::CartographicToEcef(cartographic.x, cartographic.y, cartographic.z);
+                    double final_height = cartographic.z;
+                    if (is_geoid_initialized()) {
+                        final_height = orthometric_to_ellipsoidal(cartographic.y, cartographic.x, cartographic.z);
+                    }
+                    glm::dvec3 ecef = GeoTransform::CartographicToEcef(cartographic.x, cartographic.y, final_height);
                     glm::dvec3 enu = GeoTransform::EcefToEnuMatrix * glm::dvec4(ecef, 1);
                     return enu;
                 }

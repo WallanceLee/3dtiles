@@ -138,6 +138,9 @@ fn build_win_msvc() {
     // zstd is required by gdal/basisu when building KTX2 (supercompression) and some GDAL drivers
     println!("cargo:rustc-link-lib=zstd");
 
+    // GeographicLib for geoid height calculation
+    println!("cargo:rustc-link-lib=GeographicLib");
+
     // 5. sqlite
     println!("cargo:rustc-link-lib=sqlite3");
 
@@ -285,6 +288,9 @@ fn build_linux_unknown() {
     // zstd is required by gdal/basisu when building KTX2 (supercompression) and some GDAL drivers
     println!("cargo:rustc-link-lib=zstd");
 
+    // GeographicLib for geoid height calculation
+    println!("cargo:rustc-link-lib=GeographicLib");
+
     let vcpkg_share_dir = vcpkg_installed_dir.join("share");
     copy_gdal_data(vcpkg_share_dir.to_str().unwrap());
     copy_proj_data(vcpkg_share_dir.to_str().unwrap());
@@ -411,6 +417,9 @@ fn build_macos() {
     println!("cargo:rustc-link-lib=meshoptimizer");
     // zstd is required by gdal/basisu when building KTX2 (supercompression) and some GDAL drivers
     println!("cargo:rustc-link-lib=zstd");
+
+    // GeographicLib for geoid height calculation
+    println!("cargo:rustc-link-lib=GeographicLib");
 
     // 7. System libraries / frameworks
     println!("cargo:rustc-link-lib=c++");
@@ -554,6 +563,9 @@ fn build_macos_x86_64() {
     println!("cargo:rustc-link-lib=meshoptimizer");
     // zstd is required by gdal/basisu when building KTX2 (supercompression) and some GDAL drivers
     println!("cargo:rustc-link-lib=zstd");
+
+    // GeographicLib for geoid height calculation
+    println!("cargo:rustc-link-lib=GeographicLib");
 
     // 7. System libraries / frameworks
     println!("cargo:rustc-link-lib=c++");
