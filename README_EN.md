@@ -223,6 +223,12 @@ _3dtile.exe -f shape -i E:\Data\aa.shp -o E:\Data\aa --height height
 # from single fbx file
 _3dtile.exe -f fbx -i E:\Data\model.fbx -o E:\Data\model
 
+# from fbx with geoid height conversion (China 1985 to WGS84)
+_3dtile.exe -f fbx -i E:\Data\model.fbx -o E:\Data\model --lon 120.0 --lat 30.0 --alt 100 --geoid egm96
+
+# from fbx with custom geoid data path
+_3dtile.exe -f fbx -i E:\Data\model.fbx -o E:\Data\model --lon 120.0 --lat 30.0 --geoid egm96 --geoid-path geoids/geoids
+
 # from single osgb file to glb file
 _3dtile.exe -f gltf -i E:\Data\TT\001.osgb -o E:\Data\TT\001.glb
 
@@ -271,6 +277,30 @@ _3dtile.exe -f shape -i E:\Data\aa.shp -o E:\Data\aa \
   Example: `{"x": 120, "y": 30, "offset": 0, "max_lvl": 20, "pbr": true}`
 
 - `--height <FIELD>` - Height attribute field name (required for shapefile conversion)
+
+- `--lon <LON>` - Longitude
+  Set the center longitude for FBX format positioning
+
+- `--lat <LAT>` - Latitude
+  Set the center latitude for FBX format positioning
+
+- `--alt <ALT>` - Altitude
+  Set the center altitude for FBX format positioning
+
+- `--geoid <MODEL>` - Geoid model for height conversion
+  Set the geoid model to convert orthometric height (e.g., China 1985) to ellipsoidal height (WGS84)
+  - **Available values:** `none` (default), `egm84`, `egm96`, `egm2008`
+  - **Applies to:** FBX format
+  - **Use case:** Required when source data uses orthometric height (above sea level) instead of ellipsoidal height
+  - **Example:** `--geoid egm96`
+
+- `--geoid-path <PATH>` - Path to geoid data files
+  Set the path to geoid data files (e.g., egm96-5.pgm)
+  - **Default behavior:**
+    1. First checks `GEOGRAPHICLIB_GEOID_PATH` environment variable
+    2. Falls back to default path `/usr/local/share/GeographicLib/geoids`
+  - **Applies to:** Used with `--geoid` option
+  - **Example:** `--geoid-path /path/to/geoids`
 
 - `-v, --verbose` - Enable verbose output for debugging
 
