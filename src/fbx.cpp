@@ -253,6 +253,13 @@ osg::StateSet* FBXLoader::getOrCreateStateSet(const ufbx_material* mat) {
     if (tex) {
         osg::ref_ptr<osg::Image> image;
 
+        LOG_I("Texture '%s': type=%d, has_content=%d, content_size=%zu, filename='%s'",
+              tex->name.data ? tex->name.data : "(unnamed)",
+              tex->type,
+              tex->content.data ? 1 : 0,
+              tex->content.size,
+              tex->filename.data ? tex->filename.data : "(none)");
+
         // 1. Try embedded content
         if (tex->content.data && tex->content.size > 0) {
              std::string filename = ufbx_string_to_std(tex->filename);

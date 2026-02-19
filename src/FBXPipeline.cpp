@@ -1160,6 +1160,13 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
                     std::string mimeType = "image/png"; // default
                     bool hasData = false;
 
+                    GLenum pf = img->getPixelFormat();
+                    GLenum dt = img->getDataType();
+                    int w = img->s();
+                    int h = img->t();
+                    LOG_I("Texture: %s, pixelFormat=0x%X, dataType=0x%X, width=%d, height=%d, hasData=%d",
+                          imgPath.empty() ? "(embedded)" : imgPath.c_str(), pf, dt, w, h, img->data() ? 1 : 0);
+
                     // Try KTX2 compression if enabled
                     if (settings.enableTextureCompress) {
                         std::vector<unsigned char> compressedData;
@@ -1181,10 +1188,6 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
 
                     bool hasAlphaTransparency = false;
                     {
-                        GLenum pf = img->getPixelFormat();
-                        GLenum dt = img->getDataType();
-                        int w = img->s();
-                        int h = img->t();
                         int channels = 0;
                         if (pf == GL_LUMINANCE) channels = 1;
                         else if (pf == GL_LUMINANCE_ALPHA) channels = 2;
@@ -1219,12 +1222,20 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
 
                     // Fallback: If file not found but image data exists (e.g. embedded or generated)
                     if (!hasData && img->data() != nullptr) {
+                        LOG_I("Fallback: Writing image from memory, imgPath=%s, pixelFormat=0x%X, width=%d, height=%d",
+                              imgPath.empty() ? "(empty)" : imgPath.c_str(), pf, w, h);
+
+                        // glTF only supports PNG and JPEG, so always use PNG for other formats
                         std::string ext = "png";
                         if (!imgPath.empty()) {
                             std::string e = fs::path(imgPath).extension().string();
                             if (!e.empty() && e.size() > 1) {
-                                ext = e.substr(1); // remove dot
-                                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                                e = e.substr(1); // remove dot
+                                std::transform(e.begin(), e.end(), e.begin(), ::tolower);
+                                // Only use jpg/jpeg extension, otherwise force PNG
+                                if (e == "jpg" || e == "jpeg") {
+                                    ext = e;
+                                }
                             }
                         }
 
@@ -1259,6 +1270,7 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
                     }
 
                     if (hasData) {
+                         LOG_I("Writing image: mimeType=%s, size=%zu", mimeType.c_str(), imgData.size());
                          // Add Image
                          tinygltf::Image gltfImg;
                          gltfImg.mimeType = mimeType;
