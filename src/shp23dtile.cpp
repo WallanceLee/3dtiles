@@ -656,10 +656,27 @@ void calc_normal(int baseCnt, int ptNum, Polygon_Mesh &mesh)
     }
 }
 
+static OGRCoordinateTransformation* g_shp_coord_transform = nullptr;
+static bool g_shp_is_wgs84 = true;
+static double g_shp_center_lon = 0.0;
+static double g_shp_center_lat = 0.0;
+
+static void transform_point_to_wgs84(double& x, double& y, double& z) {
+    if (g_shp_is_wgs84 || !g_shp_coord_transform) {
+        return;
+    }
+    g_shp_coord_transform->Transform(1, &x, &y, &z);
+}
+
+static std::array<float, 2> project_to_local_meters(double lon, double lat, double center_lon, double center_lat) {
+    float point_x = (float)longti_to_meter(degree2rad(lon - center_lon), degree2rad(center_lat));
+    float point_y = (float)lati_to_meter(degree2rad(lat - center_lat));
+    return {point_x, point_y};
+}
+
 Polygon_Mesh
 convert_polygon(OGRPolygon* polyon, double center_x, double center_y, double height)
 {
-    //double bottom = 0.0;
     Polygon_Mesh mesh;
     OGRLinearRing* pRing = polyon->getExteriorRing();
     int ptNum = pRing->getNumPoints();
@@ -670,12 +687,13 @@ convert_polygon(OGRPolygon* polyon, double center_x, double center_y, double hei
     for (int i = 0; i < ptNum; i++) {
         OGRPoint pt;
         pRing->getPoint(i, &pt);
-		double bottom = pt.getZ();
-        float point_x = (float)longti_to_meter(degree2rad(pt.getX() - center_x), degree2rad(center_y));
-        float point_y = (float)lati_to_meter(degree2rad(pt.getY() - center_y));
+        double x = pt.getX();
+        double y = pt.getY();
+        double bottom = pt.getZ();
+        transform_point_to_wgs84(x, y, bottom);
+        auto [point_x, point_y] = project_to_local_meters(x, y, center_x, center_y);
         mesh.vertex.push_back({ point_x , point_y, (float)bottom });
         mesh.vertex.push_back({ point_x , point_y, (float)height });
-        // double vertex
         if (i != 0 && i != ptNum - 1) {
             mesh.vertex.push_back({ point_x , point_y, (float)bottom });
             mesh.vertex.push_back({ point_x , point_y, (float)height });
@@ -701,12 +719,13 @@ convert_polygon(OGRPolygon* polyon, double center_x, double center_y, double hei
         for (int i = 0; i < ptNum; i++) {
             OGRPoint pt;
             pRing->getPoint(i, &pt);
-			double bottom = pt.getZ();
-            float point_x = (float)longti_to_meter(degree2rad(pt.getX() - center_x), degree2rad(center_y));
-            float point_y = (float)lati_to_meter(degree2rad(pt.getY() - center_y));
+            double x = pt.getX();
+            double y = pt.getY();
+            double bottom = pt.getZ();
+            transform_point_to_wgs84(x, y, bottom);
+            auto [point_x, point_y] = project_to_local_meters(x, y, center_x, center_y);
             mesh.vertex.push_back({ point_x , point_y, (float)bottom });
             mesh.vertex.push_back({ point_x , point_y, (float)height });
-            // double vertex
             if (i != 0 && i != ptNum - 1) {
                 mesh.vertex.push_back({ point_x , point_y, (float)bottom });
                 mesh.vertex.push_back({ point_x , point_y, (float)height });
@@ -722,7 +741,6 @@ convert_polygon(OGRPolygon* polyon, double center_x, double center_y, double hei
         calc_normal(pt_count, ptNum, mesh);
         pt_count = mesh.vertex.size();
     }
-    // top and bottom
     {
         using Point = std::array<double, 2>;
         std::vector<std::vector<Point>> polygon(1);
@@ -733,9 +751,11 @@ convert_polygon(OGRPolygon* polyon, double center_x, double center_y, double hei
             {
                 OGRPoint pt;
                 pRing->getPoint(i, &pt);
-				double bottom = pt.getZ();
-                float point_x = (float)longti_to_meter(degree2rad(pt.getX() - center_x), degree2rad(center_y));
-                float point_y = (float)lati_to_meter(degree2rad(pt.getY() - center_y));
+                double x = pt.getX();
+                double y = pt.getY();
+                double bottom = pt.getZ();
+                transform_point_to_wgs84(x, y, bottom);
+                auto [point_x, point_y] = project_to_local_meters(x, y, center_x, center_y);
                 polygon[0].push_back({ point_x, point_y });
                 mesh.vertex.push_back({ point_x , point_y, (float)bottom });
                 mesh.vertex.push_back({ point_x , point_y, (float)height });
@@ -753,9 +773,11 @@ convert_polygon(OGRPolygon* polyon, double center_x, double center_y, double hei
             {
                 OGRPoint pt;
                 pRing->getPoint(i, &pt);
-				double bottom = pt.getZ();
-                float point_x = (float)longti_to_meter(degree2rad(pt.getX() - center_x), degree2rad(center_y));
-                float point_y = (float)lati_to_meter(degree2rad(pt.getY() - center_y));
+                double x = pt.getX();
+                double y = pt.getY();
+                double bottom = pt.getZ();
+                transform_point_to_wgs84(x, y, bottom);
+                auto [point_x, point_y] = project_to_local_meters(x, y, center_x, center_y);
                 polygon[j].push_back({ point_x, point_y });
                 mesh.vertex.push_back({ point_x , point_y, (float)bottom });
                 mesh.vertex.push_back({ point_x , point_y, (float)height });
@@ -885,18 +907,59 @@ shp23dtile(const ShapeConversionParams* params)
         return false;
     }
 
+    const OGRSpatialReference* poSRS = poLayer->GetSpatialRef();
+    g_shp_is_wgs84 = true;
+    g_shp_coord_transform = nullptr;
+    g_shp_center_lon = 0.0;
+    g_shp_center_lat = 0.0;
+
+    if (poSRS) {
+        OGRSpatialReference wgs84SRS;
+        wgs84SRS.importFromEPSG(4326);
+        wgs84SRS.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+        OGRSpatialReference srcSRS(*poSRS);
+        srcSRS.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+        if (!srcSRS.IsSame(&wgs84SRS)) {
+            g_shp_is_wgs84 = false;
+            g_shp_coord_transform = OGRCreateCoordinateTransformation(&srcSRS, &wgs84SRS);
+            if (!g_shp_coord_transform) {
+                LOG_E("Failed to create coordinate transformation from source SRS to WGS84");
+                GDALClose(poDS);
+                return false;
+            }
+            const char* srsName = srcSRS.GetName();
+            LOG_I("Shapefile coordinate system: %s (non-WGS84, will transform to WGS84)", srsName ? srsName : "unknown");
+        } else {
+            LOG_I("Shapefile coordinate system: WGS84 (no transformation needed)");
+        }
+    } else {
+        LOG_W("Shapefile has no coordinate system defined, assuming WGS84");
+    }
+
     OGREnvelope envelop;
     OGRErr err = poLayer->GetExtent(&envelop);
     if (err != OGRERR_NONE) {
         LOG_E("no extent found in shapefile");
-        return false;
-    }
-    if (envelop.MaxX > 180 || envelop.MinX < -180 || envelop.MaxY > 90 || envelop.MinY < -90) {
-        LOG_E("only support WGS-84 now");
+        if (g_shp_coord_transform) {
+            OGRCoordinateTransformation::DestroyCT(g_shp_coord_transform);
+            g_shp_coord_transform = nullptr;
+        }
         return false;
     }
 
-    bbox bound(envelop.MinX, envelop.MaxX, envelop.MinY, envelop.MaxY);
+    double min_x = envelop.MinX, max_x = envelop.MaxX;
+    double min_y = envelop.MinY, max_y = envelop.MaxY;
+    if (!g_shp_is_wgs84 && g_shp_coord_transform) {
+        double dummy_z = 0.0;
+        g_shp_coord_transform->Transform(1, &min_x, &min_y, &dummy_z);
+        g_shp_coord_transform->Transform(1, &max_x, &max_y, &dummy_z);
+    }
+    g_shp_center_lon = (min_x + max_x) / 2.0;
+    g_shp_center_lat = (min_y + max_y) / 2.0;
+
+    bbox bound(min_x, max_x, min_y, max_y);
     node root(bound);
     OGRFeature *poFeature;
     poLayer->ResetReading();
@@ -910,7 +973,14 @@ shp23dtile(const ShapeConversionParams* params)
         }
         OGREnvelope envelop;
         poGeometry->getEnvelope(&envelop);
-        bbox bound(envelop.MinX, envelop.MaxX, envelop.MinY, envelop.MaxY);
+        double minx = envelop.MinX, maxx = envelop.MaxX;
+        double miny = envelop.MinY, maxy = envelop.MaxY;
+        if (!g_shp_is_wgs84 && g_shp_coord_transform) {
+            double dummy_z = 0.0;
+            g_shp_coord_transform->Transform(1, &minx, &miny, &dummy_z);
+            g_shp_coord_transform->Transform(1, &maxx, &maxy, &dummy_z);
+        }
+        bbox bound(minx, maxx, miny, maxy);
         unsigned long long id = poFeature->GetFID();
         root.add(id, bound);
         OGRFeature::DestroyFeature(poFeature);
@@ -932,7 +1002,6 @@ shp23dtile(const ShapeConversionParams* params)
 
     for (auto item : items_array) {
         node* _node = (node*)item;
-        // fix the box
         {
             OGREnvelope node_box;
             for (auto id : _node->get_ids()) {
@@ -940,11 +1009,24 @@ shp23dtile(const ShapeConversionParams* params)
                 OGRGeometry* poGeometry = poFeature->GetGeometryRef();
                 OGREnvelope geo_box;
                 poGeometry->getEnvelope(&geo_box);
+                double minx = geo_box.MinX, maxx = geo_box.MaxX;
+                double miny = geo_box.MinY, maxy = geo_box.MaxY;
+                if (!g_shp_is_wgs84 && g_shp_coord_transform) {
+                    double dummy_z = 0.0;
+                    g_shp_coord_transform->Transform(1, &minx, &miny, &dummy_z);
+                    g_shp_coord_transform->Transform(1, &maxx, &maxy, &dummy_z);
+                }
                 if ( !node_box.IsInit() ) {
-                    node_box = geo_box;
+                    node_box.MinX = minx;
+                    node_box.MaxX = maxx;
+                    node_box.MinY = miny;
+                    node_box.MaxY = maxy;
                 }
                 else {
-                    node_box.Merge(geo_box);
+                    node_box.MinX = std::min(node_box.MinX, minx);
+                    node_box.MaxX = std::max(node_box.MaxX, maxx);
+                    node_box.MinY = std::min(node_box.MinY, miny);
+                    node_box.MaxY = std::max(node_box.MaxY, maxy);
                 }
             }
             _node->_box.minx = node_box.MinX;
@@ -1211,6 +1293,10 @@ shp23dtile(const ShapeConversionParams* params)
     }
     //
     GDALClose(poDS);
+    if (g_shp_coord_transform) {
+        OGRCoordinateTransformation::DestroyCT(g_shp_coord_transform);
+        g_shp_coord_transform = nullptr;
+    }
     build_hierarchical_tilesets(leaf_tiles, dest);
     return true;
 }
