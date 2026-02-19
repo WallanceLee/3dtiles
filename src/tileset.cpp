@@ -3,49 +3,90 @@
 #include <string>
 #include <cstring>
 #include <cstdio>
+#include <memory>
 
 /* vcpkg path */
 #include <ogr_spatialref.h>
 #include <ogrsf_frmts.h>
 
 #include "extern.h"
-#include "GeoTransform.h"
+#include "coordinate_transformer.h"
+#include <glm/gtc/type_ptr.hpp>
 
 ///////////////////////
 static const double pi = std::acos(-1);
+
+// 全局坐标转换器实例
+// 使用 shared_ptr 避免静态析构顺序问题
+static std::shared_ptr<coords::CoordinateTransformer> g_transformer = nullptr;
+
+// 获取全局坐标转换器
+coords::CoordinateTransformer* GetGlobalTransformer() {
+    return g_transformer.get();
+}
 
 extern "C" bool
 epsg_convert(int insrs, double* val, char* gdal_data, char *proj_lib) {
     CPLSetConfigOption("GDAL_DATA", gdal_data);
     CPLSetConfigOption("PROJ_LIB", proj_lib);
-    OGRSpatialReference inRs,outRs;
+
+    fprintf(stderr, "[SRS] EPSG:%d -> EPSG:4326 (axis=traditional)\n", insrs);
+    fprintf(stderr, "[Origin ENU] x=%.6f y=%.6f z=%.3f\n", val[0], val[1], val[2]);
+
+    // 创建EPSG坐标系
+    auto cs = coords::CoordinateSystem::EPSG(insrs, val[0], val[1], val[2]);
+
+    // 创建地理参考点（需要从原点转换得到）
+    // 先创建一个临时的转换器来获取地理原点
+    OGRSpatialReference inRs, outRs;
     OGRErr inErr = inRs.importFromEPSG(insrs);
     if (inErr != OGRERR_NONE) {
         LOG_E("importFromEPSG(%d) failed, err_code=%d", insrs, inErr);
         return false;
     }
     inRs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
     OGRErr outErr = outRs.importFromEPSG(4326);
     if (outErr != OGRERR_NONE) {
         LOG_E("importFromEPSG(4326) failed, err_code=%d", outErr);
         return false;
     }
     outRs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-    fprintf(stderr, "[SRS] EPSG:%d -> EPSG:4326 (axis=traditional)\n", insrs);
-    fprintf(stderr, "[Origin ENU] x=%.6f y=%.6f z=%.3f\n", val[0], val[1], val[2]);
-    OGRCoordinateTransformation *poCT = OGRCreateCoordinateTransformation(&inRs, &outRs );
-    GeoTransform::SourceEPSG_ = insrs;
-    GeoTransform::Init(poCT, val);
-    if (poCT) {
-        if (poCT->Transform( 1, val, val + 1)) {
-            fprintf(stderr, "[Origin LLA] lon=%.10f lat=%.10f\n", val[0], val[1]);
-            // poCT will be used later so don't delete it
-            // delete poCT;
-            return true;
-        }
-        // delete poCT;
+
+    OGRCoordinateTransformation *poCT = OGRCreateCoordinateTransformation(&inRs, &outRs);
+    if (!poCT) {
+        LOG_E("Failed to create coordinate transformation");
+        return false;
     }
-    return false;
+
+    // 转换原点坐标
+    double lon = val[0], lat = val[1], height = val[2];
+    if (!poCT->Transform(1, &lon, &lat, &height)) {
+        LOG_E("Failed to transform origin coordinates");
+        OGRCoordinateTransformation::DestroyCT(poCT);
+        return false;
+    }
+
+    fprintf(stderr, "[Origin LLA] lon=%.10f lat=%.10f\n", lon, lat);
+
+    val[0] = lon;
+    val[1] = lat;
+    val[2] = height;
+
+    auto geo_ref = coords::GeoReference::FromDegrees(lon, lat, height);
+
+    // 创建全局坐标转换器（带Geoid配置）
+    coords::GeoidConfig geoid_config;
+    if (is_geoid_initialized()) {
+        geoid_config = coords::GeoidConfig::EGM96();
+        geoid_config.enabled = true;
+    }
+    g_transformer = std::make_shared<coords::CoordinateTransformer>(cs, geo_ref, geoid_config);
+
+    // 销毁临时转换器
+    OGRCoordinateTransformation::DestroyCT(poCT);
+
+    return true;
 }
 
 extern "C" bool
@@ -53,57 +94,77 @@ enu_init(double lon, double lat, double* origin_enu, char* gdal_data, char* proj
     CPLSetConfigOption("GDAL_DATA", gdal_data);
     CPLSetConfigOption("PROJ_LIB", proj_lib);
 
-    // For ENU systems, the origin_enu contains local ENU offsets
-    // We need to set up GeoTransform for the geometry correction to work
     fprintf(stderr, "[SRS] ENU:%.7f,%.7f (origin offset: %.3f, %.3f, %.3f)\n",
             lat, lon, origin_enu[0], origin_enu[1], origin_enu[2]);
     fprintf(stderr, "[Origin ENU] x=%.6f y=%.6f z=%.3f\n", origin_enu[0], origin_enu[1], origin_enu[2]);
 
-    // Create an identity transform (no actual projection needed for ENU)
-    // The origin is already in the correct coordinate system
-    OGRSpatialReference inRs, outRs;
-    outRs.importFromEPSG(4326);
-    outRs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    // 创建ENU坐标系
+    auto cs = coords::CoordinateSystem::ENU(lon, lat, 0.0,
+                                            origin_enu[0], origin_enu[1], origin_enu[2]);
 
-    // For ENU, we create a trivial transform that just passes through
-    // This allows the geometry correction logic in InfoVisitor to work
-    OGRCoordinateTransformation *poCT = OGRCreateCoordinateTransformation(&outRs, &outRs);
-
-    // IMPORTANT: For ENU, pass the ENU offsets to GeoTransform::Init
-    // These will be used in InfoVisitor::Correction to offset local vertices
-    // Store: [enu_offset_x, enu_offset_y, enu_offset_z]
-    GeoTransform::Init(poCT, origin_enu);
-
-    // Store the geographic origin separately for ENU->ECEF calculations
-    GeoTransform::SetGeographicOrigin(lon, lat, 0.0);
+    // ENU坐标系自带地理参考
+    g_transformer = std::make_shared<coords::CoordinateTransformer>(cs);
 
     fprintf(stderr, "[Origin LLA] lon=%.10f lat=%.10f\n", lon, lat);
-    return poCT != nullptr;
+    return true;
 }
 
 extern "C" bool
 wkt_convert(char* wkt, double* val, char* path) {
     CPLSetConfigOption("GDAL_DATA", path);
+
     const char* wkt_orig = wkt;
-    OGRSpatialReference inRs,outRs;
+    fprintf(stderr, "[SRS] WKT -> EPSG:4326 (axis=traditional)\n");
+    fprintf(stderr, "[Origin ENU] x=%.6f y=%.6f z=%.3f\n", val[0], val[1], val[2]);
+
+    // 创建WKT坐标系
+    auto cs = coords::CoordinateSystem::WKT(std::string(wkt_orig), val[0], val[1], val[2]);
+
+    // 创建临时OGR转换器来获取地理原点
+    OGRSpatialReference inRs, outRs;
     inRs.importFromWkt(&wkt);
     outRs.importFromEPSG(4326);
     inRs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
     outRs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-    fprintf(stderr, "[SRS] WKT -> EPSG:4326 (axis=traditional)\n");
-    fprintf(stderr, "[Origin ENU] x=%.6f y=%.6f z=%.3f\n", val[0], val[1], val[2]);
-    OGRCoordinateTransformation *poCT = OGRCreateCoordinateTransformation( &inRs, &outRs );
-    GeoTransform::SourceWKT_ = std::string(wkt_orig);
-    GeoTransform::Init(poCT, val);
-    if (poCT) {
-        if (poCT->Transform( 1, val, val + 1)) {
-            fprintf(stderr, "[Origin LLA] lon=%.10f lat=%.10f\n", val[0], val[1]);
-            // delete poCT;
-            return true;
-        }
-        // delete poCT;
+
+    OGRCoordinateTransformation *poCT = OGRCreateCoordinateTransformation(&inRs, &outRs);
+    if (!poCT) {
+        LOG_E("Failed to create coordinate transformation from WKT");
+        return false;
     }
-    return false;
+
+    // 转换原点坐标
+    double lon = val[0], lat = val[1], height = val[2];
+    if (!poCT->Transform(1, &lon, &lat, &height)) {
+        LOG_E("Failed to transform origin coordinates");
+        OGRCoordinateTransformation::DestroyCT(poCT);
+        return false;
+    }
+
+    fprintf(stderr, "[Origin LLA] lon=%.10f lat=%.10f\n", lon, lat);
+
+    val[0] = lon;
+    val[1] = lat;
+    val[2] = height;
+
+    double final_height = height;
+    if (is_geoid_initialized()) {
+        double geoid_height = get_geoid_height(lat, lon);
+        final_height = orthometric_to_ellipsoidal(lat, lon, height);
+        fprintf(stderr, "[GeoTransform] Geoid correction applied: orthometric=%.3f + geoid=%.3f = ellipsoidal=%.3f\n",
+                height, geoid_height, final_height);
+    }
+
+    // 创建地理参考
+    auto geo_ref = coords::GeoReference::FromDegrees(lon, lat, final_height);
+
+    // 创建全局坐标转换器
+    g_transformer = std::make_shared<coords::CoordinateTransformer>(cs, geo_ref);
+
+    // 销毁临时转换器
+    OGRCoordinateTransformation::DestroyCT(poCT);
+
+    return true;
 }
 
 extern "C"
@@ -130,70 +191,33 @@ extern "C"
 
 std::vector<double>
 transfrom_xyz(double lon_deg, double lat_deg, double height_min){
-    // WGS84 parameters
-    const double pi = std::acos(-1.0);
-    const double a = 6378137.0;
-    const double f = 1.0 / 298.257223563;
-    const double e2 = f * (2.0 - f);
+    // 使用CoordinateTransformer的静态方法
+    glm::dmat4 matrix = coords::CoordinateTransformer::CalcEnuToEcefMatrix(lon_deg, lat_deg, height_min);
 
-    // Convert degrees to radians
-    double lon = lon_deg * pi / 180.0;
-    double lat = lat_deg * pi / 180.0;
-
-    double sinLat = std::sin(lat), cosLat = std::cos(lat);
-    double sinLon = std::sin(lon), cosLon = std::cos(lon);
-
-    double N = a / std::sqrt(1.0 - e2 * sinLat * sinLat);
-    double x0 = (N + height_min) * cosLat * cosLon;
-    double y0 = (N + height_min) * cosLat * sinLon;
-    double z0 = (N * (1.0 - e2) + height_min) * sinLat;
-
-    // ENU basis vectors expressed in ECEF
-    double east_x = -sinLon;
-    double east_y =  cosLon;
-    double east_z =  0.0;
-
-    double north_x = -sinLat * cosLon;
-    double north_y = -sinLat * sinLon;
-    double north_z =  cosLat;
-
-    double up_x =  cosLat * cosLon;
-    double up_y =  cosLat * sinLon;
-    double up_z =  sinLat;
-
-    // Column-major 4x4 ENU->ECEF transform
-    std::vector<double> matrix = {
-        east_x,  east_y,  east_z,  0.0,
-        north_x, north_y, north_z, 0.0,
-        up_x,    up_y,    up_z,    0.0,
-        x0,      y0,      z0,      1.0
-    };
-    return matrix;
+    // 转换为vector格式（column-major）
+    std::vector<double> result(16);
+    const double* ptr = glm::value_ptr(matrix);
+    std::memcpy(result.data(), ptr, 16 * sizeof(double));
+    return result;
 }
 
 extern "C" void
 transform_c(double center_x, double center_y, double height_min, double* ptr) {
-    // transfrom_xyz now expects degrees directly
     std::vector<double> v = transfrom_xyz(center_x, center_y, height_min);
-    // Log ECEF translation from ENU->ECEF transform
     fprintf(stderr, "[transform_c] lon=%.10f lat=%.10f h=%.3f -> ECEF translation: x=%.10f y=%.10f z=%.10f\n",
             center_x, center_y, height_min, v[12], v[13], v[14]);
     std::memcpy(ptr, v.data(), v.size() * 8);
 }
 
-// New function to handle ENU offsets in transform matrix
 extern "C" void
 transform_c_with_enu_offset(double center_x, double center_y, double height_min,
                            double enu_offset_x, double enu_offset_y, double enu_offset_z,
                            double* ptr) {
-    // Calculate base transform matrix (transfrom_xyz now expects degrees)
     std::vector<double> v = transfrom_xyz(center_x, center_y, height_min);
     fprintf(stderr, "[transform_c_with_enu_offset] Base ECEF at lon=%.10f lat=%.10f h=%.3f: x=%.10f y=%.10f z=%.10f\n",
             center_x, center_y, height_min, v[12], v[13], v[14]);
 
-    // Apply ENU offset to the translation components (indices 12, 13, 14)
-    // Convert ENU offset to ECEF offset and add to translation
-    const double pi = std::acos(-1.0);
+    // 应用ENU偏移到平移分量
     double lat_rad = center_y * pi / 180.0;
     double lon_rad = center_x * pi / 180.0;
 
@@ -202,7 +226,7 @@ transform_c_with_enu_offset(double center_x, double center_y, double height_min,
     double sinLon = std::sin(lon_rad);
     double cosLon = std::cos(lon_rad);
 
-    // ENU to ECEF transformation
+    // ENU到ECEF转换
     double ecef_offset_x = -sinLon * enu_offset_x - sinLat * cosLon * enu_offset_y + cosLat * cosLon * enu_offset_z;
     double ecef_offset_y =  cosLon * enu_offset_x - sinLat * sinLon * enu_offset_y + cosLat * sinLon * enu_offset_z;
     double ecef_offset_z =  cosLat * enu_offset_y + sinLat * enu_offset_z;
@@ -210,7 +234,6 @@ transform_c_with_enu_offset(double center_x, double center_y, double height_min,
     fprintf(stderr, "[transform_c_with_enu_offset] ENU offset (%.3f, %.3f, %.3f) -> ECEF offset (%.10f, %.10f, %.10f)\n",
             enu_offset_x, enu_offset_y, enu_offset_z, ecef_offset_x, ecef_offset_y, ecef_offset_z);
 
-    // Add ECEF offset to translation components
     v[12] += ecef_offset_x;
     v[13] += ecef_offset_y;
     v[14] += ecef_offset_z;
@@ -226,9 +249,8 @@ write_tileset_box(Transform* trans, Box& box, double geometricError,
                     const char* b3dm_file, const char* json_file) {
     std::vector<double> matrix;
     if (trans) {
-        // Convert radians to degrees for transfrom_xyz
-        double lon_deg = trans->radian_x * 180.0 / std::acos(-1.0);
-        double lat_deg = trans->radian_y * 180.0 / std::acos(-1.0);
+        double lon_deg = trans->radian_x * 180.0 / pi;
+        double lat_deg = trans->radian_y * 180.0 / pi;
         matrix = transfrom_xyz(lon_deg, lat_deg, trans->min_height);
     }
     std::string json_txt = "{\"asset\": {\
@@ -279,9 +301,8 @@ bool write_tileset_region(
 {
     std::vector<double> matrix;
     if (trans) {
-        // Convert radians to degrees for transfrom_xyz
-        double lon_deg = trans->radian_x * 180.0 / std::acos(-1.0);
-        double lat_deg = trans->radian_y * 180.0 / std::acos(-1.0);
+        double lon_deg = trans->radian_x * 180.0 / pi;
+        double lat_deg = trans->radian_y * 180.0 / pi;
         matrix = transfrom_xyz(lon_deg, lat_deg, trans->min_height);
     }
     std::string json_txt = "{\"asset\": {\
@@ -334,7 +355,6 @@ write_tileset(double radian_x, double radian_y,
     double ellipsod_c = 40408299984661.4;
 
     const double pi = std::acos(-1);
-    // Inputs are radians (historic API). Convert to degrees for transfrom_xyz
     double lon_deg = radian_x * 180.0 / pi;
     double lat_deg = radian_y * 180.0 / pi;
 
@@ -370,14 +390,12 @@ write_tileset(double radian_x, double radian_y,
         north_mat[2]*north_mat[2]
         );
 
-    // Use the existing ENU->ECEF transform builder (expects degrees)
     std::vector<double> matrix = transfrom_xyz(lon_deg, lat_deg, height_min);
 
-    // Build a local ENU-aligned box: center at mid-height, half-axes along ENU
     double half_w = tile_w * 0.5;
     double half_h = tile_h * 0.5;
     double half_z = (height_max - height_min) * 0.5;
-    double center_z = half_z; // origin is at height_min, so center is at half span
+    double center_z = half_z;
 
     std::string json_txt = "{\"asset\": {\
         \"version\": \"0.0\",\
@@ -394,7 +412,6 @@ write_tileset(double radian_x, double radian_y,
     json_txt += "1],\
     \"boundingVolume\": {\
     \"box\": [";
-    // box: center (local ENU), then three half-axes
     double box_vals[12] = {
         0.0, 0.0, center_z,
         half_w, 0.0, 0.0,
@@ -420,4 +437,52 @@ write_tileset(double radian_x, double radian_y,
         LOG_E("write file %s fail", filename);
     }
     return ret;
+}
+
+// 新增：获取全局坐标转换器的FFI接口
+extern "C" void* get_coordinate_transformer() {
+    return static_cast<void*>(g_transformer.get());
+}
+
+// 获取地理原点高度的FFI接口
+extern "C" double get_geo_origin_height() {
+    if (g_transformer && g_transformer->HasGeoReference()) {
+        return g_transformer->GeoOriginHeight();
+    }
+    return 0.0;
+}
+
+// Geoid height conversion functions - C FFI implementations
+#include "GeoidHeight.h"
+
+extern "C" bool init_geoid(const char* model, const char* geoid_path) {
+    std::string model_str = model ? model : "none";
+    std::string path_str = geoid_path ? geoid_path : "";
+
+    GeoidHeight::GeoidModel geoid_model = GeoidHeight::GeoidCalculator::StringToGeoidModel(model_str);
+    return GeoidHeight::InitializeGlobalGeoidCalculator(geoid_model, path_str);
+}
+
+extern "C" double get_geoid_height(double lat, double lon) {
+    auto& calculator = GeoidHeight::GetGlobalGeoidCalculator();
+    auto height = calculator.GetGeoidHeight(lat, lon);
+    return height.value_or(0.0);
+}
+
+extern "C" double orthometric_to_ellipsoidal(double lat, double lon, double orthometric_height) {
+    auto& calculator = GeoidHeight::GetGlobalGeoidCalculator();
+    return calculator.ConvertOrthometricToEllipsoidal(lat, lon, orthometric_height);
+}
+
+extern "C" double ellipsoidal_to_orthometric(double lat, double lon, double ellipsoidal_height) {
+    auto& calculator = GeoidHeight::GetGlobalGeoidCalculator();
+    return calculator.ConvertEllipsoidalToOrthometric(lat, lon, ellipsoidal_height);
+}
+
+extern "C" bool is_geoid_initialized() {
+    return GeoidHeight::GetGlobalGeoidCalculator().IsInitialized();
+}
+
+extern "C" void cleanup_global_resources() {
+    g_transformer.reset();
 }

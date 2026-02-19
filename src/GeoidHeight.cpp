@@ -1,22 +1,19 @@
 #include "GeoidHeight.h"
 #include <GeographicLib/Geoid.hpp>
-#include <spdlog/spdlog.h>
 #include <filesystem>
 #include <cstdlib>
+#include <cstdio>
 
 namespace GeoidHeight {
 
 bool GeoidCalculator::Initialize(GeoidModel model, const std::string& geoidPath) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
     if (model == GeoidModel::NONE) {
-        initialized_ = false;
-        model_ = GeoidModel::NONE;
-        geoid_ = nullptr;
-        spdlog::info("[GeoidHeight] Geoid model set to NONE, no height conversion will be applied");
+        model_.store(GeoidModel::NONE);
+        geoid_.reset();
+        fprintf(stderr, "[GeoidHeight] Geoid model set to NONE, no height conversion will be applied\n");
         return true;
     }
-    
+
     std::string geoidName;
     switch (model) {
         case GeoidModel::EGM84:
@@ -29,55 +26,48 @@ bool GeoidCalculator::Initialize(GeoidModel model, const std::string& geoidPath)
             geoidName = "egm2008-5";
             break;
         default:
-            spdlog::error("[GeoidHeight] Unknown geoid model");
+            fprintf(stderr, "[GeoidHeight] Unknown geoid model\n");
             return false;
     }
-    
+
     try {
         std::string actualPath = geoidPath;
         if (actualPath.empty()) {
             actualPath = GetDefaultGeoidDataPath();
         }
-        
-        spdlog::info("[GeoidHeight] Initializing geoid model: {} with path: {}", geoidName, actualPath);
-        
-        auto* g = new GeographicLib::Geoid(geoidName, actualPath, true, true);
-        
-        if (geoid_) {
-            delete static_cast<GeographicLib::Geoid*>(geoid_);
-        }
+
+        fprintf(stderr, "[GeoidHeight] Initializing geoid model: %s with path: %s\n", geoidName.c_str(), actualPath.c_str());
+
+        auto g = std::make_shared<GeographicLib::Geoid>(geoidName, actualPath, true, true);
+
         geoid_ = g;
-        model_ = model;
-        initialized_ = true;
-        
-        spdlog::info("[GeoidHeight] Geoid model {} initialized successfully", geoidName);
-        spdlog::info("[GeoidHeight] Description: {}", g->Description());
-        spdlog::info("[GeoidHeight] DateTime: {}", g->DateTime());
-        spdlog::info("[GeoidHeight] Interpolation: {}", g->Interpolation());
-        spdlog::info("[GeoidHeight] MaxError: {} m", g->MaxError());
-        spdlog::info("[GeoidHeight] RMSError: {} m", g->RMSError());
-        
+        model_.store(model);
+
+        fprintf(stderr, "[GeoidHeight] Geoid model %s initialized successfully\n", geoidName.c_str());
+        fprintf(stderr, "[GeoidHeight] Description: %s\n", g->Description().c_str());
+        fprintf(stderr, "[GeoidHeight] DateTime: %s\n", g->DateTime().c_str());
+        fprintf(stderr, "[GeoidHeight] Interpolation: %s\n", g->Interpolation().c_str());
+        fprintf(stderr, "[GeoidHeight] MaxError: %f m\n", g->MaxError());
+        fprintf(stderr, "[GeoidHeight] RMSError: %f m\n", g->RMSError());
+
         return true;
     } catch (const std::exception& e) {
-        spdlog::error("[GeoidHeight] Failed to initialize geoid model {}: {}", geoidName, e.what());
-        initialized_ = false;
-        geoid_ = nullptr;
+        fprintf(stderr, "[GeoidHeight] Failed to initialize geoid model %s: %s\n", geoidName.c_str(), e.what());
+        geoid_.reset();
         return false;
     }
 }
 
 std::optional<double> GeoidCalculator::GetGeoidHeight(double lat, double lon) const {
-    if (!initialized_ || !geoid_) {
+    auto local_geoid = geoid_;
+    if (!local_geoid) {
         return std::nullopt;
     }
-    
-    std::lock_guard<std::mutex> lock(mutex_);
-    
+
     try {
-        auto* g = static_cast<GeographicLib::Geoid*>(geoid_);
-        return (*g)(lat, lon);
+        return (*local_geoid)(lat, lon);
     } catch (const std::exception& e) {
-        spdlog::error("[GeoidHeight] Failed to get geoid height at ({}, {}): {}", lat, lon, e.what());
+        fprintf(stderr, "[GeoidHeight] Failed to get geoid height at (%f, %f): %s\n", lat, lon, e.what());
         return std::nullopt;
     }
 }
@@ -120,12 +110,12 @@ std::string GeoidCalculator::GetDefaultGeoidDataPath() {
     if (envPath && envPath[0] != '\0') {
         return std::string(envPath);
     }
-    
+
     const char* dataPath = std::getenv("GEOGRAPHICLIB_DATA");
     if (dataPath && dataPath[0] != '\0') {
         return std::string(dataPath) + "/geoids";
     }
-    
+
 #ifdef _WIN32
     return "C:/ProgramData/GeographicLib/geoids";
 #else

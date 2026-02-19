@@ -64,4 +64,5 @@ extern "C" {
     pub fn orthometric_to_ellipsoidal(lat: f64, lon: f64, orthometric_height: f64) -> f64;
     pub fn ellipsoidal_to_orthometric(lat: f64, lon: f64, ellipsoidal_height: f64) -> f64;
     pub fn is_geoid_initialized() -> bool;
+    pub fn cleanup_global_resources();
 }

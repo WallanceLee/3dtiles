@@ -98,7 +98,14 @@ extern "C" double orthometric_to_ellipsoidal(double lat, double lon, double orth
 extern "C" double ellipsoidal_to_orthometric(double lat, double lon, double ellipsoidal_height);
 extern "C" bool is_geoid_initialized();
 
+// Cleanup global resources before program exit
+extern "C" void cleanup_global_resources();
+
 // Get the geoid-corrected origin height from GeoTransform
 extern "C" double get_geo_origin_height();
+
+// Coordinate transformer access (new API)
+namespace coords { class CoordinateTransformer; }
+coords::CoordinateTransformer* GetGlobalTransformer();
 
 ////////////////////////

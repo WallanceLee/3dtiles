@@ -29,7 +29,7 @@
 #include <tiny_gltf.h>
 #include <nlohmann/json.hpp>
 #include "extern.h"
-#include "GeoTransform.h"
+#include "coordinate_transformer.h"
 
 using namespace std;
 
@@ -162,11 +162,15 @@ public:
         else
             other_geometry_array.push_back(&geometry);
 
-        GeoTransform::EnsureThreadTransform();
-        if (GeoTransform::pOgrCT)
+        // 获取全局坐标转换器
+        coords::CoordinateTransformer* transformer = GetGlobalTransformer();
+
+        // 检查是否有坐标转换器且需要OGR转换
+        bool needs_transform = transformer && transformer->HasGeoReference();
+
+        if (needs_transform)
         {
             osg::Vec3Array *vertexArr = (osg::Vec3Array *)geometry.getVertexArray();
-            OGRCoordinateTransformation *poCT = GeoTransform::pOgrCT.get();
 
             /** 1. We obtain the bound of this tile */
             glm::dvec3 Min = glm::dvec3(DBL_MAX);
@@ -189,38 +193,8 @@ public:
              * can occur when the tile is located far from the origin.
              */
             auto Correction = [&](glm::dvec3 Point) {
-                // Use the explicit IsENU flag set by SetGeographicOrigin()
-                if (GeoTransform::IsENU) {
-                    // For ENU: Point is already in ENU meters relative to the geographic origin
-                    // Add the SRSOrigin offset to get the absolute ENU position
-                    glm::dvec3 absoluteENU = Point + glm::dvec3(GeoTransform::OriginX, GeoTransform::OriginY, GeoTransform::OriginZ);
-                    // Convert ENU meters to ECEF, then back to ENU for the correction matrix
-                    glm::dvec3 ecef = GeoTransform::CartographicToEcef(GeoTransform::GeoOriginLon, GeoTransform::GeoOriginLat, GeoTransform::GeoOriginHeight);
-                    // Apply ENU->ECEF rotation at origin
-                    const double pi = std::acos(-1.0);
-                    double lat = GeoTransform::GeoOriginLat * pi / 180.0;
-                    double lon = GeoTransform::GeoOriginLon * pi / 180.0;
-                    double sinLat = std::sin(lat), cosLat = std::cos(lat);
-                    double sinLon = std::sin(lon), cosLon = std::cos(lon);
-                    // ENU to ECEF rotation
-                    double ecef_x = -sinLon * absoluteENU.x - sinLat * cosLon * absoluteENU.y + cosLat * cosLon * absoluteENU.z;
-                    double ecef_y =  cosLon * absoluteENU.x - sinLat * sinLon * absoluteENU.y + cosLat * sinLon * absoluteENU.z;
-                    double ecef_z =  cosLat * absoluteENU.y + sinLat * absoluteENU.z;
-                    ecef = glm::dvec3(ecef.x + ecef_x, ecef.y + ecef_y, ecef.z + ecef_z);
-                    glm::dvec3 enu = GeoTransform::EcefToEnuMatrix * glm::dvec4(ecef, 1);
-                    return enu;
-                } else {
-                    // For EPSG: Original logic - add projected origin and transform
-                    glm::dvec3 cartographic = Point + glm::dvec3(GeoTransform::OriginX, GeoTransform::OriginY, GeoTransform::OriginZ);
-                    poCT->Transform(1, &cartographic.x, &cartographic.y, &cartographic.z);
-                    double final_height = cartographic.z;
-                    if (is_geoid_initialized()) {
-                        final_height = orthometric_to_ellipsoidal(cartographic.y, cartographic.x, cartographic.z);
-                    }
-                    glm::dvec3 ecef = GeoTransform::CartographicToEcef(cartographic.x, cartographic.y, final_height);
-                    glm::dvec3 enu = GeoTransform::EcefToEnuMatrix * glm::dvec4(ecef, 1);
-                    return enu;
-                }
+                // 使用新的CoordinateTransformer进行坐标转换
+                return transformer->ToLocalENU(Point);
             };
             vector<glm::dvec4> OriginalPoints(8);
             vector<glm::dvec4> CorrectedPoints(8);

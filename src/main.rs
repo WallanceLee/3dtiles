@@ -739,11 +739,13 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
         enu_offset, origin_height, enable_texture_compress, enable_simplify, enable_draco, enable_unlit)
     {
         error!("{}", e);
+        unsafe { fun_c::cleanup_global_resources(); }
         return;
     }
     let elap_sec = tick.elapsed().unwrap();
     let tick_num = elap_sec.as_secs() as f64 + elap_sec.subsec_nanos() as f64 * 1e-9;
     info!("task over, cost {:.2} s.", tick_num);
+    unsafe { fun_c::cleanup_global_resources(); }
 }
 
 fn convert_shapefile(

@@ -5,7 +5,7 @@
 
 #include "mesh_processor.h"
 #include "attribute_storage.h"
-#include "GeoTransform.h"
+#include "coordinate_transformer.h"
 #include "lod_pipeline.h"
 #include "shape.h"
 
@@ -275,8 +275,8 @@ static std::vector<double> flatten_mat(const glm::dmat4& m) {
 }
 
 static glm::dmat4 make_transform(double center_lon_deg, double center_lat_deg, double min_height) {
-    // Reuse the ENU->ECEF transform used in the osgb pipeline for consistent placement
-    return GeoTransform::CalcEnuToEcefMatrix(center_lon_deg, center_lat_deg, min_height);
+    // 使用CoordinateTransformer的静态方法计算ENU->ECEF变换矩阵
+    return coords::CoordinateTransformer::CalcEnuToEcefMatrix(center_lon_deg, center_lat_deg, min_height);
 }
 
 static nlohmann::json box_to_json(double cx, double cy, double cz, double half_w, double half_h, double half_z) {

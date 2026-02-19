@@ -1,6 +1,6 @@
 #include "FBXPipeline.h"
 #include "extern.h"
-#include "GeoTransform.h"
+#include "coordinate_transformer.h"
 #include <osg/MatrixTransform>
 #include <osg/Geode>
 #include <osg/Material>
@@ -2155,7 +2155,7 @@ void FBXPipeline::writeTilesetJson(const std::string& basePath, const osg::Bound
 
     // Always add Transform to anchor local ENU coordinates to ECEF
     if (settings.longitude != 0.0 || settings.latitude != 0.0 || settings.height != 0.0) {
-        glm::dmat4 enuToEcef = GeoTransform::CalcEnuToEcefMatrix(settings.longitude, settings.latitude, settings.height);
+        glm::dmat4 enuToEcef = coords::CoordinateTransformer::CalcEnuToEcefMatrix(settings.longitude, settings.latitude, settings.height);
 
         // Calculate center of the model (in original local coordinates - Y-up from FBX)
         double cx = (globalBounds.xMin() + globalBounds.xMax()) * 0.5;
