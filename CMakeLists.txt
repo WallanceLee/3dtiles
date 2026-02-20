@@ -143,7 +143,7 @@ target_link_libraries(_3dtile PRIVATE unofficial::sqlite3::sqlite3)
 
 # GeographicLib for geoid height calculation
 find_package(GeographicLib CONFIG REQUIRED)
-target_link_libraries(_3dtile PRIVATE GeographicLib::GeographicLib_STATIC)
+target_link_libraries(_3dtile PRIVATE ${GeographicLib_LIBRARIES})
 
 
 install(TARGETS _3dtile DESTINATION lib)
