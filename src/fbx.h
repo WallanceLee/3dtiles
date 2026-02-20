@@ -7,8 +7,39 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <array>
 
-// Mesh合并与属性挂载辅助结构
+struct TextureTransformData {
+    std::array<float, 2> offset = {0.0f, 0.0f};
+    float rotation = 0.0f;
+    std::array<float, 2> scale = {1.0f, 1.0f};
+    int tex_coord = 0;
+    bool has_transform = false;
+
+    static TextureTransformData Identity() { return {}; }
+};
+
+struct SpecularGlossinessData {
+    std::array<double, 4> diffuse_factor = {1.0, 1.0, 1.0, 1.0};
+    std::array<double, 3> specular_factor = {1.0, 1.0, 1.0};
+    double glossiness_factor = 1.0;
+    bool use_specular_glossiness = false;
+    int diffuse_texture_index = -1;
+    int specular_glossiness_texture_index = -1;
+
+    static SpecularGlossinessData Default() { return {}; }
+};
+
+struct MaterialExtensionData {
+    TextureTransformData base_color_transform;
+    TextureTransformData normal_transform;
+    TextureTransformData emissive_transform;
+    TextureTransformData metallic_roughness_transform;
+    TextureTransformData occlusion_transform;
+    SpecularGlossinessData specular_glossiness;
+    bool has_any_extension = false;
+};
+
 struct MeshKey {
     std::string geomHash; // mesh内容hash
     std::string matHash;  // 材质hash
@@ -64,6 +95,10 @@ public:
     std::unordered_map<std::string, osg::ref_ptr<osg::StateSet>> materialHashCache;
     // 基于几何内容哈希的去重缓存 (hash -> osg::Geometry*)
     std::unordered_map<std::string, osg::ref_ptr<osg::Geometry>> geometryHashCache;
+    // 材质扩展数据缓存 (ufbx_material* -> MaterialExtensionData)
+    std::unordered_map<const ufbx_material*, MaterialExtensionData> materialExtensionCache;
+    // StateSet 到扩展数据的映射 (用于 Pipeline 访问)
+    std::unordered_map<const osg::StateSet*, MaterialExtensionData> stateSetExtensionCache;
 
     // 处理 Mesh 并返回 Geode (如果需要挂载到场景)
     osg::ref_ptr<osg::Geode> processMesh(ufbx_node *node, ufbx_mesh *mesh, const osg::Matrixd &globalXform);

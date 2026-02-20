@@ -23,6 +23,8 @@
 #include <typeinfo>
 #include <osg/GL>
 #include <cmath>
+#include "gltf_writer/extensions/texture_transform.h"
+#include "gltf_writer/extensions/specular_glossiness.h"
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -406,7 +408,7 @@ void FBXPipeline::buildOctree(OctreeNode* node) {
 }
 
 struct TileStats { size_t node_count = 0; size_t vertex_count = 0; size_t triangle_count = 0; size_t material_count = 0; };
-void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef>& instances, const PipelineSettings& settings, gltf_writer::ExtensionManager& ext_mgr, json* batchTableJson, int* batchIdCounter, const SimplificationParams& simParams, osg::BoundingBoxd* outBox = nullptr, TileStats* stats = nullptr, const char* dbgTileName = nullptr) {
+void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef>& instances, const PipelineSettings& settings, gltf_writer::ExtensionManager& ext_mgr, json* batchTableJson, int* batchIdCounter, const SimplificationParams& simParams, FBXLoader* loader, osg::BoundingBoxd* outBox = nullptr, TileStats* stats = nullptr, const char* dbgTileName = nullptr) {
     if (instances.empty()) return;
 
     // Ensure model has at least one buffer
@@ -1694,7 +1696,70 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
             }
         }
 
-        mat.pbrMetallicRoughness.baseColorFactor = baseColor;
+        auto extIt = loader->stateSetExtensionCache.find(stateSet);
+        bool useSpecularGlossiness = false;
+        if (extIt != loader->stateSetExtensionCache.end()) {
+            const MaterialExtensionData& extData = extIt->second;
+
+            if (extData.specular_glossiness.use_specular_glossiness) {
+                useSpecularGlossiness = true;
+                gltf_writer::extensions::SpecularGlossiness sg;
+                sg.diffuse_factor = extData.specular_glossiness.diffuse_factor;
+                sg.specular_factor = extData.specular_glossiness.specular_factor;
+                sg.glossiness_factor = extData.specular_glossiness.glossiness_factor;
+                gltf_writer::extensions::applySpecularGlossiness(mat, sg, ext_mgr);
+            }
+
+            if (extData.base_color_transform.has_transform) {
+                gltf_writer::extensions::TextureTransform transform;
+                transform.offset = extData.base_color_transform.offset;
+                transform.rotation = extData.base_color_transform.rotation;
+                transform.scale = extData.base_color_transform.scale;
+                transform.tex_coord = extData.base_color_transform.tex_coord;
+                gltf_writer::extensions::applyTextureTransform(mat, "baseColorTexture", transform, ext_mgr);
+            }
+
+            if (extData.normal_transform.has_transform) {
+                gltf_writer::extensions::TextureTransform transform;
+                transform.offset = extData.normal_transform.offset;
+                transform.rotation = extData.normal_transform.rotation;
+                transform.scale = extData.normal_transform.scale;
+                transform.tex_coord = extData.normal_transform.tex_coord;
+                gltf_writer::extensions::applyTextureTransform(mat, "normalTexture", transform, ext_mgr);
+            }
+
+            if (extData.emissive_transform.has_transform) {
+                gltf_writer::extensions::TextureTransform transform;
+                transform.offset = extData.emissive_transform.offset;
+                transform.rotation = extData.emissive_transform.rotation;
+                transform.scale = extData.emissive_transform.scale;
+                transform.tex_coord = extData.emissive_transform.tex_coord;
+                gltf_writer::extensions::applyTextureTransform(mat, "emissiveTexture", transform, ext_mgr);
+            }
+
+            if (extData.metallic_roughness_transform.has_transform) {
+                gltf_writer::extensions::TextureTransform transform;
+                transform.offset = extData.metallic_roughness_transform.offset;
+                transform.rotation = extData.metallic_roughness_transform.rotation;
+                transform.scale = extData.metallic_roughness_transform.scale;
+                transform.tex_coord = extData.metallic_roughness_transform.tex_coord;
+                gltf_writer::extensions::applyTextureTransform(mat, "metallicRoughnessTexture", transform, ext_mgr);
+            }
+
+            if (extData.occlusion_transform.has_transform) {
+                gltf_writer::extensions::TextureTransform transform;
+                transform.offset = extData.occlusion_transform.offset;
+                transform.rotation = extData.occlusion_transform.rotation;
+                transform.scale = extData.occlusion_transform.scale;
+                transform.tex_coord = extData.occlusion_transform.tex_coord;
+                gltf_writer::extensions::applyTextureTransform(mat, "occlusionTexture", transform, ext_mgr);
+            }
+        }
+
+        if (!useSpecularGlossiness) {
+            mat.pbrMetallicRoughness.baseColorFactor = baseColor;
+        }
+
         if (mat.alphaMode.empty()) {
             if (baseColor[3] < 0.99) mat.alphaMode = "BLEND";
             else mat.alphaMode = "OPAQUE";
@@ -1703,6 +1768,7 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
         mat.pbrMetallicRoughness.metallicFactor = metallicFactor;
         mat.pbrMetallicRoughness.roughnessFactor = roughnessFactor;
         mat.emissiveFactor = {emissiveColor[0], emissiveColor[1], emissiveColor[2]};
+
         int matIdx = (int)model.materials.size();
         model.materials.push_back(mat);
 
@@ -1929,7 +1995,7 @@ std::pair<std::string, osg::BoundingBoxd> FBXPipeline::createB3DM(const std::vec
     osg::BoundingBoxd contentBox;
 
     TileStats tileStats;
-    appendGeometryToModel(model, instances, settings, ext_mgr, &batchTableJson, &batchIdCounter, simParams, &contentBox, &tileStats, tileName.c_str());
+    appendGeometryToModel(model, instances, settings, ext_mgr, &batchTableJson, &batchIdCounter, simParams, loader, &contentBox, &tileStats, tileName.c_str());
     LOG_I("Tile %s: nodes=%zu triangles=%zu vertices=%zu materials=%zu", tileName.c_str(), tileStats.node_count, tileStats.triangle_count, tileStats.vertex_count, tileStats.material_count);
 
     // Populate Batch Table with node names and attributes

@@ -1539,13 +1539,13 @@ private:
 
 **影响范围**：仅影响 FBX Pipeline，不影响其他 Pipeline
 
-| 任务 | 风险 |
-|------|------|
-| 实现 `ExtensionManager` | 低 |
-| 实现 `KHR_texture_transform` 数据结构 | 低 |
-| 实现 `KHR_materials_pbrSpecularGlossiness` 数据结构 | 低 |
-| 在 `FBXPipeline` 中集成新 Extension | 中 |
-| 单元测试 | 低 |
+| 任务 | 风险 | 状态 |
+|------|------|------|
+| 实现 `ExtensionManager` | 低 | ✅ 已完成 |
+| 实现 `KHR_texture_transform` 数据结构 | 低 | ✅ 已完成 |
+| 实现 `KHR_materials_pbrSpecularGlossiness` 数据结构 | 低 | ✅ 已完成 |
+| 在 `FBXPipeline` 中集成新 Extension | 中 | ✅ 已完成 |
+| 单元测试 | 低 | ⏳ 待开始 |
 
 **验证方式**：
 - 使用 FBX 测试文件生成 3D Tiles

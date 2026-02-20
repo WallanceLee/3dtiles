@@ -497,6 +497,90 @@ osg::StateSet* FBXLoader::getOrCreateStateSet(const ufbx_material* mat) {
     stateSet->addUniform(new osg::Uniform("roughnessFactor", roughness));
     stateSet->addUniform(new osg::Uniform("metallicFactor", metallic));
 
+    MaterialExtensionData extData;
+
+    auto extractTextureTransform = [](const ufbx_texture* texture) -> TextureTransformData {
+        TextureTransformData result;
+        if (!texture || !texture->has_uv_transform) {
+            return result;
+        }
+
+        const ufbx_transform& t = texture->uv_transform;
+        result.has_transform = true;
+        result.offset[0] = static_cast<float>(t.translation.x);
+        result.offset[1] = static_cast<float>(t.translation.y);
+        result.scale[0] = static_cast<float>(t.scale.x);
+        result.scale[1] = static_cast<float>(t.scale.y);
+
+        ufbx_vec3 euler = ufbx_quat_to_euler(t.rotation, UFBX_ROTATION_ORDER_XYZ);
+        result.rotation = static_cast<float>(euler.z * M_PI / 180.0);
+
+        return result;
+    };
+
+    if (tex) {
+        extData.base_color_transform = extractTextureTransform(tex);
+        if (extData.base_color_transform.has_transform) {
+            extData.has_any_extension = true;
+        }
+    }
+    if (ntex) {
+        extData.normal_transform = extractTextureTransform(ntex);
+        if (extData.normal_transform.has_transform) {
+            extData.has_any_extension = true;
+        }
+    }
+    if (etex) {
+        extData.emissive_transform = extractTextureTransform(etex);
+        if (extData.emissive_transform.has_transform) {
+            extData.has_any_extension = true;
+        }
+    }
+    if (rtex) {
+        extData.metallic_roughness_transform = extractTextureTransform(rtex);
+        if (extData.metallic_roughness_transform.has_transform) {
+            extData.has_any_extension = true;
+        }
+    }
+    if (aotex) {
+        extData.occlusion_transform = extractTextureTransform(aotex);
+        if (extData.occlusion_transform.has_transform) {
+            extData.has_any_extension = true;
+        }
+    }
+
+    bool hasSpecular = mat->fbx.specular_color.has_value &&
+                   (mat->fbx.specular_color.value_vec3.x > 0.5 ||
+                    mat->fbx.specular_color.value_vec3.y > 0.5 ||
+                    mat->fbx.specular_color.value_vec3.z > 0.5) &&
+                   !mat->pbr.base_color.has_value;
+    if (hasSpecular) {
+        extData.specular_glossiness.use_specular_glossiness = true;
+        extData.specular_glossiness.diffuse_factor = {
+            static_cast<double>(diffuse.r()),
+            static_cast<double>(diffuse.g()),
+            static_cast<double>(diffuse.b()),
+            static_cast<double>(diffuse.a())
+        };
+        extData.specular_glossiness.specular_factor = {
+            static_cast<double>(specular.r()),
+            static_cast<double>(specular.g()),
+            static_cast<double>(specular.b())
+        };
+        if (mat->fbx.specular_exponent.has_value) {
+            float shininess = static_cast<float>(mat->fbx.specular_exponent.value_real);
+            if (shininess < 0.0f) shininess = 0.0f;
+            if (shininess > 128.0f) shininess = 128.0f;
+            extData.specular_glossiness.glossiness_factor = shininess / 128.0;
+        }
+        extData.has_any_extension = true;
+    }
+
+    if (extData.has_any_extension) {
+        materialExtensionCache[mat] = extData;
+        stateSetExtensionCache[stateSet] = extData;
+    }
+
     materialCache[mat] = stateSet;
     materialHashCache[matHash] = stateSet;
     material_created_count++;
