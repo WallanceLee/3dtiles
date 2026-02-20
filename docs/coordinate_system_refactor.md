@@ -655,3 +655,112 @@ double CoordinateTransformer::ApplyGeoidCorrection(double lat, double lon, doubl
         .ConvertOrthometricToEllipsoidal(lat, lon, height);
 }
 ```
+
+## 11. 实现状态
+
+### 11.1 已完成
+
+| 模块 | 文件 | 状态 |
+|------|------|------|
+| CoordinateSystem | `src/coordinate_system.h/cpp` | ✅ 已实现 |
+| CoordinateTransformer | `src/coordinate_transformer.h/cpp` | ✅ 已实现 |
+| coords 命名空间 | - | ✅ 已建立 |
+
+### 11.2 已迁移
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| `tileset.cpp` | ✅ 已完成 | 使用 `coords::CoordinateTransformer` 作为全局转换器 |
+| `osgb23dtile.cpp` | ✅ 已完成 | 使用 `GetGlobalTransformer()` 获取转换器 |
+| `shp23dtile.cpp` | ✅ 已完成 | 使用 `coords::CoordinateTransformer::CalcEnuToEcefMatrix` |
+| `FBXPipeline.cpp` | ✅ 已完成 | 使用 `coords::CoordinateTransformer::CalcEnuToEcefMatrix` |
+| `GeoTransform.h/cpp` | ✅ 已删除 | 旧代码已移除 |
+
+### 11.3 待清理
+
+| 项目 | 说明 |
+|------|------|
+| Rust FFI 层注释 | `main.rs` 中残留的 "GeoTransform" 注释文本 |
+| `extern.h` 注释 | 残留的 "GeoTransform" 注释文本 |
+| `tileset.cpp` 日志 | `[GeoTransform]` 日志前缀可考虑更新 |
+
+## 12. 与 glTF Writer 重构方案的协调
+
+### 12.1 模块关系
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Pipeline Layer                               │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐     │
+│  │ ShapefilePipeline│  │  OsgbPipeline   │  │   FBXPipeline   │     │
+│  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘     │
+│           │                    │                    │               │
+│           └────────────────────┼────────────────────┘               │
+│                                │                                    │
+│           ┌────────────────────┼────────────────────┐               │
+│           ▼                    ▼                    ▼               │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐     │
+│  │coords namespace │  │gltf_writer ns   │  │mesh_processor   │     │
+│  │CoordinateSystem │  │GltfBuilder      │  │simplify_mesh    │     │
+│  │CoordinateTrans- │  │B3dmWriter       │  │compress_mesh    │     │
+│  │former           │  │TilesetWriter    │  │process_texture  │     │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 12.2 职责划分
+
+| 模块 | 职责 | 命名空间 |
+|------|------|----------|
+| **coords** | 坐标系定义、坐标转换、地理参考 | `coords::` |
+| **gltf_writer** | glTF 模型构建、Extension 管理、B3DM 输出 | `gltf_writer::` |
+| **mesh_processor** | 网格简化、Draco 压缩、纹理处理 | 全局函数 |
+
+### 12.3 协作示例
+
+```cpp
+#include "coordinate_transformer.h"
+#include "gltf_writer/gltf_builder.h"
+#include "mesh_processor.h"
+
+void convertFBXTo3DTiles(const FBXData& fbx_data,
+                         const coords::GeoReference& geo_ref) {
+    // 1. 坐标转换
+    coords::CoordinateSystem cs = coords::CoordinateSystem::LocalCartesian(
+        coords::UpAxis::Y_UP);
+    coords::CoordinateTransformer transformer(cs, geo_ref);
+
+    std::vector<glm::dvec3> local_points;
+    for (const auto& p : fbx_data.positions) {
+        local_points.push_back(transformer.ToLocalENU(
+            glm::dvec3(p.x, p.y, p.z)));
+    }
+
+    // 2. 网格处理
+    std::vector<VertexData> vertices;
+    std::vector<unsigned int> indices;
+    SimplificationParams simp_params{.enable_simplification = true};
+    optimize_and_simplify_mesh(vertices, vertex_count, indices,
+                               index_count, simplified_indices,
+                               simplified_count, simp_params);
+
+    // 3. glTF 构建
+    gltf_writer::GltfBuilderConfig config {
+        .enable_draco = true,
+        .enable_unlit = true
+    };
+    gltf_writer::GltfBuilder builder(config);
+
+    // ... 添加顶点、索引、材质等
+
+    // 4. B3DM 输出
+    gltf_writer::B3dmWriter b3dm_writer;
+    b3dm_writer.setGlbData(builder.toGLB());
+    b3dm_writer.writeToFile("output.b3dm");
+}
+```
+
+### 12.4 相关文档
+
+- glTF Writer 重构方案: `docs/gltf_writer_refactor.md`
+- 网格处理模块: `src/mesh_processor.h`

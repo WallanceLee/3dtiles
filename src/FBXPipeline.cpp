@@ -406,7 +406,7 @@ void FBXPipeline::buildOctree(OctreeNode* node) {
 }
 
 struct TileStats { size_t node_count = 0; size_t vertex_count = 0; size_t triangle_count = 0; size_t material_count = 0; };
-void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef>& instances, const PipelineSettings& settings, json* batchTableJson, int* batchIdCounter, const SimplificationParams& simParams, osg::BoundingBoxd* outBox = nullptr, TileStats* stats = nullptr, const char* dbgTileName = nullptr) {
+void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef>& instances, const PipelineSettings& settings, gltf_writer::ExtensionManager& ext_mgr, json* batchTableJson, int* batchIdCounter, const SimplificationParams& simParams, osg::BoundingBoxd* outBox = nullptr, TileStats* stats = nullptr, const char* dbgTileName = nullptr) {
     if (instances.empty()) return;
 
     // Ensure model has at least one buffer
@@ -989,12 +989,7 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
                  model.bufferViews.push_back(bv);
 
                  dracoCompressed = true;
-
-                 // Register extension
-                 if (std::find(model.extensionsUsed.begin(), model.extensionsUsed.end(), "KHR_draco_mesh_compression") == model.extensionsUsed.end()) {
-                     model.extensionsUsed.push_back("KHR_draco_mesh_compression");
-                     model.extensionsRequired.push_back("KHR_draco_mesh_compression");
-                 }
+                 ext_mgr.useAndRequire("KHR_draco_mesh_compression");
             }
         }
 
@@ -1120,9 +1115,7 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
 
         if (settings.enableUnlit) {
             mat.extensions["KHR_materials_unlit"] = tinygltf::Value(tinygltf::Value::Object());
-            if (std::find(model.extensionsUsed.begin(), model.extensionsUsed.end(), "KHR_materials_unlit") == model.extensionsUsed.end()) {
-                model.extensionsUsed.push_back("KHR_materials_unlit");
-            }
+            ext_mgr.use("KHR_materials_unlit");
         }
 
         const osg::StateSet* stateSet = pair.first;
@@ -1176,12 +1169,7 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
                                 imgData = compressedData;
                                 mimeType = compressedMime;
                                 hasData = true;
-
-                                // Register extension
-                                if (std::find(model.extensionsUsed.begin(), model.extensionsUsed.end(), "KHR_texture_basisu") == model.extensionsUsed.end()) {
-                                    model.extensionsUsed.push_back("KHR_texture_basisu");
-                                    model.extensionsRequired.push_back("KHR_texture_basisu");
-                                }
+                                ext_mgr.useAndRequire("KHR_texture_basisu");
                             }
                         }
                     }
@@ -1347,12 +1335,7 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
                                 imgData = compressedData;
                                 mimeType = compressedMime;
                                 hasData = true;
-
-                                // Register extension
-                                if (std::find(model.extensionsUsed.begin(), model.extensionsUsed.end(), "KHR_texture_basisu") == model.extensionsUsed.end()) {
-                                    model.extensionsUsed.push_back("KHR_texture_basisu");
-                                    model.extensionsRequired.push_back("KHR_texture_basisu");
-                                }
+                                ext_mgr.useAndRequire("KHR_texture_basisu");
                             }
                         }
                     }
@@ -1465,12 +1448,7 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
                                 imgData = compressedData;
                                 mimeType = compressedMime;
                                 hasData = true;
-
-                                // Register extension
-                                if (std::find(model.extensionsUsed.begin(), model.extensionsUsed.end(), "KHR_texture_basisu") == model.extensionsUsed.end()) {
-                                    model.extensionsUsed.push_back("KHR_texture_basisu");
-                                    model.extensionsRequired.push_back("KHR_texture_basisu");
-                                }
+                                ext_mgr.useAndRequire("KHR_texture_basisu");
                             }
                         }
                     }
@@ -1649,12 +1627,7 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
                      }
                      if (compress_to_ktx2(mr_rgba, tw, th, finalData)) {
                          finalMimeType = "image/ktx2";
-
-                         // Register extension if not already
-                         if (std::find(model.extensionsUsed.begin(), model.extensionsUsed.end(), "KHR_texture_basisu") == model.extensionsUsed.end()) {
-                             model.extensionsUsed.push_back("KHR_texture_basisu");
-                             model.extensionsRequired.push_back("KHR_texture_basisu");
-                         }
+                         ext_mgr.useAndRequire("KHR_texture_basisu");
                      }
                 }
 
@@ -1949,12 +1922,14 @@ std::pair<std::string, osg::BoundingBoxd> FBXPipeline::createB3DM(const std::vec
     asset.generator = "FBX23DTiles";
     model.asset = asset;
 
+    gltf_writer::ExtensionManager ext_mgr;
+
     json batchTableJson;
     int batchIdCounter = 0;
     osg::BoundingBoxd contentBox;
 
     TileStats tileStats;
-    appendGeometryToModel(model, instances, settings, &batchTableJson, &batchIdCounter, simParams, &contentBox, &tileStats, tileName.c_str());
+    appendGeometryToModel(model, instances, settings, ext_mgr, &batchTableJson, &batchIdCounter, simParams, &contentBox, &tileStats, tileName.c_str());
     LOG_I("Tile %s: nodes=%zu triangles=%zu vertices=%zu materials=%zu", tileName.c_str(), tileStats.node_count, tileStats.triangle_count, tileStats.vertex_count, tileStats.material_count);
 
     // Populate Batch Table with node names and attributes
@@ -2004,6 +1979,9 @@ std::pair<std::string, osg::BoundingBoxd> FBXPipeline::createB3DM(const std::vec
         LOG_I("Tile %s: no content generated, skip B3DM", tileName.c_str());
         return {"", contentBox};
     }
+
+    // Apply extensions to model
+    ext_mgr.apply(model);
 
     // 2. Create B3DM wrapping GLB
     std::string filename = tileName + ".b3dm";

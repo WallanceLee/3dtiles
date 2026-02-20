@@ -8,6 +8,7 @@
 #include <osg/Geometry>
 #include <nlohmann/json.hpp>
 #include "mesh_processor.h"
+#include "gltf_writer/extension_manager.h"
 #include <unordered_map>
 
 // Forward declarations
