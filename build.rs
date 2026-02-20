@@ -117,6 +117,16 @@ fn build_win_msvc() {
     let vcpkg_installed_lib_dir = vcpkg_installed_dir.join("lib");
     println!("cargo:rustc-link-search=native={}", vcpkg_installed_lib_dir.display());
 
+    // Determine if building in debug or release mode
+    let profile = env::var("PROFILE").unwrap_or("release".to_string());
+    let is_debug = profile == "debug";
+    let geolib_lib_name = if is_debug {
+        "GeographicLib_d-i"
+    } else {
+        "GeographicLib-i"
+    };
+    println!("cargo:warning=Building in {} mode, linking GeographicLib as: {}", profile, geolib_lib_name);
+
     // 1. FFI static
     println!("cargo:rustc-link-lib=static=_3dtile");
     println!("cargo:rustc-link-lib=static=ufbx");
@@ -139,7 +149,7 @@ fn build_win_msvc() {
     println!("cargo:rustc-link-lib=zstd");
 
     // GeographicLib for geoid height calculation
-    println!("cargo:rustc-link-lib=GeographicLib_d-i");
+    println!("cargo:rustc-link-lib={}", geolib_lib_name);
 
     // 5. sqlite
     println!("cargo:rustc-link-lib=sqlite3");
