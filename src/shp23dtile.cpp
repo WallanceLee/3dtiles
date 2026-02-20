@@ -302,15 +302,15 @@ static double compute_geometric_error_from_spans(double span_x, double span_y, d
 static bool write_node_tileset(const TileMeta& node,
                                const std::unordered_map<uint64_t, TileMeta>& nodes,
                                const std::string& dest_root,
-                               int min_z_root) {
-    // parent bbox in degrees/meters
+                               int min_z_root,
+                               double global_center_lon,
+                               double global_center_lat) {
     double center_lon = (node.bbox.minx + node.bbox.maxx) * 0.5;
     double center_lat = (node.bbox.miny + node.bbox.maxy) * 0.5;
     double width_deg = (node.bbox.maxx - node.bbox.minx);
     double height_deg = (node.bbox.maxy - node.bbox.miny);
     double lon_rad_span = degree2rad(width_deg);
     double lat_rad_span = degree2rad(height_deg);
-    // Pad bounding volumes to reduce near-plane/frustum culling when zoomed in
     const double BOUNDING_VOLUME_SCALE_FACTOR = 2.0;
     double half_w = longti_to_meter(lon_rad_span * 0.5, degree2rad(center_lat)) * 1.05 * BOUNDING_VOLUME_SCALE_FACTOR;
     double half_h = lati_to_meter(lat_rad_span * 0.5) * 1.05 * BOUNDING_VOLUME_SCALE_FACTOR;
@@ -319,16 +319,18 @@ static bool write_node_tileset(const TileMeta& node,
 
     glm::dmat4 parent_global = make_transform(center_lon, center_lat, min_h);
 
+    double center_offset_x = longti_to_meter(degree2rad(center_lon - global_center_lon), degree2rad(global_center_lat));
+    double center_offset_y = lati_to_meter(degree2rad(center_lat - global_center_lat));
+
     nlohmann::json root;
     root["asset"] = { {"version", "1.0"}, {"gltfUpAxis", "Z"} };
     root["geometricError"] = node.geometric_error;
 
     nlohmann::json root_node;
-    // Apply global transform only on the root-level tileset; other nodes inherit via parent translations
     if (node.z == min_z_root) {
         root_node["transform"] = flatten_mat(parent_global);
     }
-    root_node["boundingVolume"]["box"] = box_to_json(0.0, 0.0, half_z, half_w, half_h, half_z);
+    root_node["boundingVolume"]["box"] = box_to_json(center_offset_x, center_offset_y, half_z, half_w, half_h, half_z);
     root_node["refine"] = "REPLACE";
     root_node["geometricError"] = node.geometric_error;
 
@@ -348,12 +350,12 @@ static bool write_node_tileset(const TileMeta& node,
         double child_half_z = (child.bbox.maxHeight - child.bbox.minHeight) * 0.5 * BOUNDING_VOLUME_SCALE_FACTOR;
         double child_min_h = child.bbox.minHeight;
 
-        // Child boundingVolume is defined in the child's local coordinate system.
-        // The child tile's transform positions it in the parent coordinate system.
-        // (Avoid double-applying translation, which can cause Cesium frustum culling to drop whole tiles.)
+        double child_center_offset_x = longti_to_meter(degree2rad(child_center_lon - global_center_lon), degree2rad(global_center_lat));
+        double child_center_offset_y = lati_to_meter(degree2rad(child_center_lat - global_center_lat));
+
         child_node["boundingVolume"]["box"] = box_to_json(
-            0.0,
-            0.0,
+            child_center_offset_x,
+            child_center_offset_y,
             child_half_z,
             child_half_w,
             child_half_h,
@@ -361,17 +363,11 @@ static bool write_node_tileset(const TileMeta& node,
         child_node["refine"] = "REPLACE";
         child_node["geometricError"] = child.geometric_error;
 
-        // Child transform: relative matrix = parent_global^-1 * child_global to preserve hierarchy in ECEF
-        glm::dmat4 child_global = make_transform(child_center_lon, child_center_lat, child_min_h);
-        glm::dmat4 relative = glm::inverse(parent_global) * child_global;
-        child_node["transform"] = flatten_mat(relative);
-
         std::filesystem::path parent_path = std::filesystem::path(dest_root) / node.tileset_rel;
         std::filesystem::path parent_dir = parent_path.parent_path();
         std::error_code ec;
         std::filesystem::create_directories(parent_dir, ec);
 
-        // Calculate relative path from parent to child
         std::filesystem::path child_path = std::filesystem::path(dest_root) / child.tileset_rel;
         std::filesystem::path child_uri = std::filesystem::relative(child_path, parent_dir);
         child_node["content"]["uri"] = "./" + child_uri.generic_string();
@@ -394,7 +390,9 @@ static bool write_node_tileset(const TileMeta& node,
 }
 
 static void build_hierarchical_tilesets(const std::vector<TileMeta>& leaves,
-                                        const std::string& dest_root) {
+                                        const std::string& dest_root,
+                                        double global_center_lon,
+                                        double global_center_lat) {
     constexpr int MAX_LEVELS = 4; // root + 3 levels of depth to keep hierarchy shallow
     if (leaves.empty()) return;
 
@@ -427,7 +425,7 @@ static void build_hierarchical_tilesets(const std::vector<TileMeta>& leaves,
 
         nodes[encode_key(root.z, root.x, root.y)] = root;
 
-        write_node_tileset(root, nodes, dest_root, root.z);
+        write_node_tileset(root, nodes, dest_root, root.z, global_center_lon, global_center_lat);
         return;
     }
 
@@ -590,7 +588,7 @@ static void build_hierarchical_tilesets(const std::vector<TileMeta>& leaves,
     });
 
     for (const auto& parent : parents) {
-        write_node_tileset(parent, nodes, dest_root, min_z_all);
+        write_node_tileset(parent, nodes, dest_root, min_z_all, global_center_lon, global_center_lat);
     }
 }
 
@@ -668,9 +666,9 @@ static void transform_point_to_wgs84(double& x, double& y, double& z) {
     g_shp_coord_transform->Transform(1, &x, &y, &z);
 }
 
-static std::array<float, 2> project_to_local_meters(double lon, double lat, double center_lon, double center_lat) {
-    float point_x = (float)longti_to_meter(degree2rad(lon - center_lon), degree2rad(center_lat));
-    float point_y = (float)lati_to_meter(degree2rad(lat - center_lat));
+static std::array<float, 2> project_to_local_meters(double lon, double lat) {
+    float point_x = (float)longti_to_meter(degree2rad(lon - g_shp_center_lon), degree2rad(g_shp_center_lat));
+    float point_y = (float)lati_to_meter(degree2rad(lat - g_shp_center_lat));
     return {point_x, point_y};
 }
 
@@ -691,7 +689,7 @@ convert_polygon(OGRPolygon* polyon, double center_x, double center_y, double hei
         double y = pt.getY();
         double bottom = pt.getZ();
         transform_point_to_wgs84(x, y, bottom);
-        auto [point_x, point_y] = project_to_local_meters(x, y, center_x, center_y);
+        auto [point_x, point_y] = project_to_local_meters(x, y);
         mesh.vertex.push_back({ point_x , point_y, (float)bottom });
         mesh.vertex.push_back({ point_x , point_y, (float)height });
         if (i != 0 && i != ptNum - 1) {
@@ -723,7 +721,7 @@ convert_polygon(OGRPolygon* polyon, double center_x, double center_y, double hei
             double y = pt.getY();
             double bottom = pt.getZ();
             transform_point_to_wgs84(x, y, bottom);
-            auto [point_x, point_y] = project_to_local_meters(x, y, center_x, center_y);
+            auto [point_x, point_y] = project_to_local_meters(x, y);
             mesh.vertex.push_back({ point_x , point_y, (float)bottom });
             mesh.vertex.push_back({ point_x , point_y, (float)height });
             if (i != 0 && i != ptNum - 1) {
@@ -755,7 +753,7 @@ convert_polygon(OGRPolygon* polyon, double center_x, double center_y, double hei
                 double y = pt.getY();
                 double bottom = pt.getZ();
                 transform_point_to_wgs84(x, y, bottom);
-                auto [point_x, point_y] = project_to_local_meters(x, y, center_x, center_y);
+                auto [point_x, point_y] = project_to_local_meters(x, y);
                 polygon[0].push_back({ point_x, point_y });
                 mesh.vertex.push_back({ point_x , point_y, (float)bottom });
                 mesh.vertex.push_back({ point_x , point_y, (float)height });
@@ -777,7 +775,7 @@ convert_polygon(OGRPolygon* polyon, double center_x, double center_y, double hei
                 double y = pt.getY();
                 double bottom = pt.getZ();
                 transform_point_to_wgs84(x, y, bottom);
-                auto [point_x, point_y] = project_to_local_meters(x, y, center_x, center_y);
+                auto [point_x, point_y] = project_to_local_meters(x, y);
                 polygon[j].push_back({ point_x, point_y });
                 mesh.vertex.push_back({ point_x , point_y, (float)bottom });
                 mesh.vertex.push_back({ point_x , point_y, (float)height });
@@ -1151,12 +1149,6 @@ shp23dtile(const ShapeConversionParams* params)
         // Use LOD configuration from params (already extracted at function start)
         const bool lod_enabled = lod_cfg.enable_lod && !lod_cfg.levels.empty();
 
-        std::vector<double> identity_transform = {
-            1,0,0,0,
-            0,1,0,0,
-            0,0,1,0,
-            0,0,0,1
-        };
         double half_w = tile_w_m * 0.5;
         double half_h = tile_h_m * 0.5;
         double half_z = tile_z_m * 0.5;
@@ -1228,12 +1220,13 @@ shp23dtile(const ShapeConversionParams* params)
             double bucket_half_z = span_z * 0.5;
             double bucket_center_z = bucket_half_z;
 
+            auto [center_offset_x, center_offset_y] = project_to_local_meters(center_x, center_y);
+
             auto make_lod_node = [&](size_t idx) {
                 nlohmann::json node_json;
                 node_json["refine"] = "REPLACE";
                 node_json["geometricError"] = lod_errors[idx];
-                node_json["boundingVolume"]["box"] = box_to_json(0.0, 0.0, bucket_center_z, half_w, half_h, bucket_half_z);
-                node_json["transform"] = identity_transform;
+                node_json["boundingVolume"]["box"] = box_to_json(center_offset_x, center_offset_y, bucket_center_z, half_w, half_h, bucket_half_z);
                 node_json["content"]["uri"] = std::string("./") + lod_names[idx];
                 return node_json;
             };
@@ -1297,7 +1290,7 @@ shp23dtile(const ShapeConversionParams* params)
         OGRCoordinateTransformation::DestroyCT(g_shp_coord_transform);
         g_shp_coord_transform = nullptr;
     }
-    build_hierarchical_tilesets(leaf_tiles, dest);
+    build_hierarchical_tilesets(leaf_tiles, dest, g_shp_center_lon, g_shp_center_lat);
     return true;
 }
 
