@@ -139,7 +139,7 @@ fn build_win_msvc() {
     println!("cargo:rustc-link-lib=zstd");
 
     // GeographicLib for geoid height calculation
-    println!("cargo:rustc-link-lib=GeographicLib");
+    println!("cargo:rustc-link-lib=GeographicLib_d-i");
 
     // 5. sqlite
     println!("cargo:rustc-link-lib=sqlite3");
