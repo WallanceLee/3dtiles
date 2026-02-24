@@ -31,6 +31,9 @@
 #include "extern.h"
 #include "coordinate_transformer.h"
 #include "b3dm/b3dm_writer.h"
+#include "tileset/bounding_volume.h"
+#include "tileset/tileset_writer.h"
+#include "tileset/geometric_error.h"
 
 using namespace std;
 
@@ -111,28 +114,11 @@ void write_buf(void* context, void* data, int len) {
     buf->insert(buf->end(), (char*)data, (char*)data + len);
 }
 
-struct TileBox
-{
-    std::vector<double> max;
-    std::vector<double> min;
-
-    void extend(double ratio) {
-        ratio /= 2;
-        double x = max[0] - min[0];
-        double y = max[1] - min[1];
-        double z = max[2] - min[2];
-        max[0] += x * ratio;
-        max[1] += y * ratio;
-        max[2] += z * ratio;
-
-        min[0] -= x * ratio;
-        min[1] -= y * ratio;
-        min[2] -= z * ratio;
-    }
-};
+// Alias for backward compatibility - using tileset::Box for bounding volumes
+using TileBox = tileset::Box;
 
 struct osg_tree {
-    TileBox bbox;
+    tileset::Box bbox;
     double geometricError;
     std::string file_name;
     std::vector<osg_tree> sub_nodes;
@@ -283,19 +269,10 @@ public:
     std::set<osg::Texture*> other_texture_array;
 };
 
-double get_geometric_error(TileBox& bbox){
-    if (bbox.max.empty() || bbox.min.empty())
-    {
-        //LOG_E("bbox is empty!");
-        return 0;
-    }
-
-    double max_err = std::max((bbox.max[0] - bbox.min[0]),(bbox.max[1] - bbox.min[1]));
-    max_err = std::max(max_err, (bbox.max[2] - bbox.min[2]));
-    return max_err / 2.0;
-//     const double pi = std::acos(-1);
-//     double round = 2 * pi * 6378137.0 / 128.0;
-//     return round / std::pow(2.0, lvl );
+// Wrapper function that delegates to tileset::computeGeometricError
+// Kept for backward compatibility with existing code
+double get_geometric_error(const tileset::Box& bbox){
+    return tileset::computeGeometricError(bbox, 0.05);
 }
 
 std::string get_file_name(std::string path) {
@@ -1250,7 +1227,7 @@ bool osgb2glb_buf(std::string path, std::string& glb_buff, MeshInfo& mesh_info, 
     return true;
 }
 
-bool osgb2b3dm_buf(std::string path, std::string& b3dm_buf, TileBox& tile_box, int node_type, bool enable_texture_compress = false, bool enable_meshopt = false, bool enable_draco = false, bool enable_unlit = true)
+bool osgb2b3dm_buf(std::string path, std::string& b3dm_buf, tileset::Box& tile_box, int node_type, bool enable_texture_compress = false, bool enable_meshopt = false, bool enable_draco = false, bool enable_unlit = true)
 {
     std::string glb_buf;
     MeshInfo minfo;
@@ -1258,33 +1235,17 @@ bool osgb2b3dm_buf(std::string path, std::string& b3dm_buf, TileBox& tile_box, i
     if (!ret)
         return false;
 
-    tile_box.max = minfo.max;
-    tile_box.min = minfo.min;
+    // Convert MeshInfo min/max to tileset::Box
+    tile_box = tileset::createBoxFromMinMax(
+        minfo.min[0], minfo.min[1], minfo.min[2],
+        minfo.max[0], minfo.max[1], minfo.max[2]
+    );
 
     // 使用统一的 B3DM 写入接口
     constexpr int mesh_count = 1;
     b3dm_buf = b3dm::wrapGlbToB3dmSimple(glb_buf, mesh_count);
 
     return !b3dm_buf.empty();
-}
-
-std::vector<double> convert_bbox(TileBox tile) {
-    double center_mx = (tile.max[0] + tile.min[0]) / 2;
-    double center_my = (tile.max[1] + tile.min[1]) / 2;
-    double center_mz = (tile.max[2] + tile.min[2]) / 2;
-    double x_meter = (tile.max[0] - tile.min[0]) * 1;
-    double y_meter = (tile.max[1] - tile.min[1]) * 1;
-    double z_meter = (tile.max[2] - tile.min[2]) * 1;
-    if (x_meter < 0.01) { x_meter = 0.01; }
-    if (y_meter < 0.01) { y_meter = 0.01; }
-    if (z_meter < 0.01) { z_meter = 0.01; }
-    std::vector<double> v = {
-        center_mx,center_my,center_mz,
-        x_meter/2, 0, 0,
-        0, y_meter/2, 0,
-        0, 0, z_meter/2
-    };
-    return v;
 }
 
 void do_tile_job(osg_tree& tree, std::string out_path, int max_lvl, bool enable_texture_compress = false, bool enable_meshopt = false, bool enable_draco = false, bool enable_unlit = true) {
@@ -1314,69 +1275,73 @@ void do_tile_job(osg_tree& tree, std::string out_path, int max_lvl, bool enable_
     }
 }
 
-void expend_box(TileBox& box, TileBox& box_new) {
-    if (box_new.max.empty() || box_new.min.empty()) {
-        return;
-    }
-    if (box.max.empty()) {
-        box.max = box_new.max;
-    }
-    if (box.min.empty()) {
-        box.min = box_new.min;
-    }
-    for (int i = 0; i < 3; i++) {
-        if (box.min[i] > box_new.min[i])
-            box.min[i] = box_new.min[i];
-        if (box.max[i] < box_new.max[i])
-            box.max[i] = box_new.max[i];
-    }
+// Helper function to extract min/max from tileset::Box
+static void box_to_min_max(const tileset::Box& box, double& min_x, double& min_y, double& min_z, double& max_x, double& max_y, double& max_z) {
+    auto center = box.center();
+    auto x_axis = box.xAxis();
+    auto y_axis = box.yAxis();
+    auto z_axis = box.zAxis();
+
+    // Calculate half-lengths
+    double hx = std::sqrt(x_axis[0]*x_axis[0] + x_axis[1]*x_axis[1] + x_axis[2]*x_axis[2]);
+    double hy = std::sqrt(y_axis[0]*y_axis[0] + y_axis[1]*y_axis[1] + y_axis[2]*y_axis[2]);
+    double hz = std::sqrt(z_axis[0]*z_axis[0] + z_axis[1]*z_axis[1] + z_axis[2]*z_axis[2]);
+
+    min_x = center[0] - hx;
+    max_x = center[0] + hx;
+    min_y = center[1] - hy;
+    max_y = center[1] + hy;
+    min_z = center[2] - hz;
+    max_z = center[2] + hz;
 }
 
-TileBox extend_tile_box(osg_tree& tree) {
-    TileBox box = tree.bbox;
+// Check if box is empty (all half-lengths are zero)
+static bool is_box_empty(const tileset::Box& box) {
+    double hx = std::sqrt(box.values[3]*box.values[3] + box.values[4]*box.values[4] + box.values[5]*box.values[5]);
+    double hy = std::sqrt(box.values[6]*box.values[6] + box.values[7]*box.values[7] + box.values[8]*box.values[8]);
+    double hz = std::sqrt(box.values[9]*box.values[9] + box.values[10]*box.values[10] + box.values[11]*box.values[11]);
+    return hx == 0.0 && hy == 0.0 && hz == 0.0;
+}
+
+// Merge two boxes by expanding the first to contain both
+void expend_box(tileset::Box& box, const tileset::Box& box_new) {
+    if (is_box_empty(box_new)) {
+        return;
+    }
+
+    double min_x1, min_y1, min_z1, max_x1, max_y1, max_z1;
+    double min_x2, min_y2, min_z2, max_x2, max_y2, max_z2;
+
+    box_to_min_max(box, min_x1, min_y1, min_z1, max_x1, max_y1, max_z1);
+    box_to_min_max(box_new, min_x2, min_y2, min_z2, max_x2, max_y2, max_z2);
+
+    if (is_box_empty(box)) {
+        box = box_new;
+        return;
+    }
+
+    // Compute union
+    double new_min_x = std::min(min_x1, min_x2);
+    double new_min_y = std::min(min_y1, min_y2);
+    double new_min_z = std::min(min_z1, min_z2);
+    double new_max_x = std::max(max_x1, max_x2);
+    double new_max_y = std::max(max_y1, max_y2);
+    double new_max_z = std::max(max_z1, max_z2);
+
+    box = tileset::createBoxFromMinMax(new_min_x, new_min_y, new_min_z, new_max_x, new_max_y, new_max_z);
+}
+
+tileset::Box extend_tile_box(osg_tree& tree) {
+    tileset::Box box = tree.bbox;
     for (auto& i : tree.sub_nodes) {
-        TileBox sub_tile = extend_tile_box(i);
+        tileset::Box sub_tile = extend_tile_box(i);
         expend_box(box, sub_tile);
     }
     tree.bbox = box;
     return box;
 }
 
-std::string get_boundingBox(TileBox bbox) {
-    std::string box_str = "\"boundingVolume\":{";
-    box_str += "\"box\":[";
-    std::vector<double> v_box = convert_bbox(bbox);
-    for (auto v: v_box) {
-        box_str += std::to_string(v);
-        box_str += ",";
-    }
-    box_str.pop_back();
-    box_str += "]}";
-    return box_str;
-}
-
-std::string get_boundingRegion(TileBox bbox, double x, double y) {
-    std::string box_str = "\"boundingVolume\":{";
-    box_str += "\"region\":[";
-    std::vector<double> v_box(6);
-    v_box[0] = meter_to_longti(bbox.min[0],y) + x;
-    v_box[1] = meter_to_lati(bbox.min[1]) + y;
-    v_box[2] = meter_to_longti(bbox.max[0], y) + x;
-    v_box[3] = meter_to_lati(bbox.max[1]) + y;
-    v_box[4] = bbox.min[2];
-    v_box[5] = bbox.max[2];
-
-    for (auto v : v_box) {
-        box_str += std::to_string(v);
-        box_str += ",";
-    }
-    box_str.pop_back();
-    box_str += "]}";
-    return box_str;
-}
-
 void calc_geometric_error(osg_tree& tree) {
-    const double EPS = 1e-12;
     // depth first
     for (auto& i : tree.sub_nodes) {
         calc_geometric_error(i);
@@ -1385,60 +1350,66 @@ void calc_geometric_error(osg_tree& tree) {
         tree.geometricError = get_geometric_error(tree.bbox);
     }
     else {
-        double max_sub_geometric_error = 0.0;
+        // Collect child errors and use tileset::computeParentGeometricError
+        std::vector<double> childErrors;
+        childErrors.reserve(tree.sub_nodes.size());
         for (auto &sub_node : tree.sub_nodes) {
-            max_sub_geometric_error = std::max(max_sub_geometric_error, sub_node.geometricError);
+            childErrors.push_back(sub_node.geometricError);
         }
-
-        tree.geometricError = max_sub_geometric_error * 2.0;
+        tree.geometricError = tileset::computeParentGeometricError(childErrors, 2.0);
     }
 }
 
+// Convert osg_tree to tileset::Tile for use with TilesetWriter
+tileset::Tile convert_osg_tree_to_tile(osg_tree& tree) {
+    // Create tile with bounding volume and geometric error
+    tileset::Tile tile(tree.bbox, tree.geometricError);
+
+    // Set content if this is a leaf node (type > 0)
+    if (tree.type > 0 && !tree.file_name.empty()) {
+        std::string file_name = get_file_name(tree.file_name);
+        std::string uri_path = "./" + file_name;
+        std::string uri = replace(uri_path, ".osgb", tree.type != 2 ? ".b3dm" : "o.b3dm");
+        tile.setContent(uri);
+    }
+
+    // Recursively convert children
+    for (auto& child_tree : tree.sub_nodes) {
+        tile.addChild(convert_osg_tree_to_tile(child_tree));
+    }
+
+    return tile;
+}
+
+// Convert osg_tree to JSON for a single tile (not full tileset)
+// Uses TilesetWriter internally but extracts only the root tile JSON
+std::string convert_osg_tree_to_tile_json(osg_tree& tree) {
+    if (is_box_empty(tree.bbox))
+        return "";
+
+    // Convert osg_tree to tileset::Tile
+    tileset::Tile root_tile = convert_osg_tree_to_tile(tree);
+
+    // Create a minimal tileset with just this tile
+    tileset::Tileset tileset(root_tile, tree.geometricError);
+
+    // Use TilesetWriter to generate full tileset JSON
+    tileset::TilesetWriter writer;
+    std::string full_tileset_json = writer.write(tileset);
+
+    // Parse and extract only the "root" tile object
+    nlohmann::json full_json = nlohmann::json::parse(full_tileset_json);
+    nlohmann::json root_tile_json = full_json["root"];
+
+    return root_tile_json.dump();
+}
+
+// Legacy function - kept for backward compatibility
+// Returns a single tile JSON (not full tileset) to match Rust expectations
 std::string
 encode_tile_json(osg_tree& tree, double x, double y)
 {
-    if (tree.bbox.max.empty() || tree.bbox.min.empty())
-        return "";
-
-    std::string file_name = get_file_name(tree.file_name);
-    std::string parent_str = get_parent(tree.file_name);
-    std::string file_path = get_file_name(parent_str);
-
-    char buf[512];
-    sprintf(buf, "{ \"geometricError\":%.2f,", tree.geometricError);
-    std::string tile = buf;
-    TileBox cBox = tree.bbox;
-    //cBox.extend(0.1);
-    std::string content_box = get_boundingBox(cBox);
-    TileBox bbox = tree.bbox;
-    //bbox.extend(0.1);
-    std::string tile_box = get_boundingBox(bbox);
-
-    tile += tile_box;
-    if (tree.type > 0) {
-        tile += ", \"content\":{ \"uri\":";
-        // Data/Tile_0/Tile_0.b3dm
-        std::string uri_path = "./";
-        uri_path += file_name;
-        std::string uri = replace(uri_path, ".osgb", tree.type != 2 ? ".b3dm" : "o.b3dm");
-        tile += "\"";
-        tile += uri;
-        tile += "\",";
-        tile += content_box;
-        tile += "}";
-    }
-    tile += ",\"children\":[";
-    for ( auto& i : tree.sub_nodes ){
-        std::string node_json = encode_tile_json(i,x,y);
-        if (!node_json.empty()) {
-            tile += node_json;
-            tile += ",";
-        }
-    }
-    if (tile.back() == ',')
-        tile.pop_back();
-    tile += "]}";
-    return tile;
+    return convert_osg_tree_to_tile_json(tree);
 }
 
 /***/
@@ -1457,7 +1428,7 @@ osgb23dtile_path(const char* in_path, const char* out_path,
     }
     do_tile_job(root, out_path, max_lvl, enable_texture_compress, enable_meshopt, enable_draco, enable_unlit);
     extend_tile_box(root);
-    if (root.bbox.max.empty() || root.bbox.min.empty())
+    if (is_box_empty(root.bbox))
     {
         LOG_E( "[%s] bbox is empty!", in_path);
         return NULL;
@@ -1465,9 +1436,15 @@ osgb23dtile_path(const char* in_path, const char* out_path,
     // prevent for root node disappear
     calc_geometric_error(root);
     std::string json = encode_tile_json(root, x, y);
-    root.bbox.extend(0.2);
-    memcpy(box, root.bbox.max.data(), 3 * sizeof(double));
-    memcpy(box + 3, root.bbox.min.data(), 3 * sizeof(double));
+    root.bbox = root.bbox.extended(0.2);
+
+    // Extract min/max from tileset::Box for output
+    double min_x, min_y, min_z, max_x, max_y, max_z;
+    box_to_min_max(root.bbox, min_x, min_y, min_z, max_x, max_y, max_z);
+    double max_vals[3] = {max_x, max_y, max_z};
+    double min_vals[3] = {min_x, min_y, min_z};
+    memcpy(box, max_vals, 3 * sizeof(double));
+    memcpy(box + 3, min_vals, 3 * sizeof(double));
     void* str = malloc(json.length());
     memcpy(str, json.c_str(), json.length());
     *len = json.length();
