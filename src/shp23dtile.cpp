@@ -10,6 +10,15 @@
 #include "shape.h"
 #include "b3dm/b3dm_writer.h"
 
+// Tileset 模块
+#include "tileset/tileset_types.h"
+#include "tileset/tileset_writer.h"
+#include "tileset/bounding_volume.h"
+
+// Shapefile 业务层
+#include "shapefile/shapefile_tile.h"
+#include "shapefile/shapefile_tileset_adapter.h"
+
 /* vcpkg path */
 #include <ogrsf_frmts.h>
 
@@ -193,64 +202,15 @@ public:
     }
 };
 
-struct TileBBox {
-    double minx = 0.0; // degrees
-    double maxx = 0.0; // degrees
-    double miny = 0.0; // degrees
-    double maxy = 0.0; // degrees
-    double minHeight = 0.0; // meters
-    double maxHeight = 0.0; // meters
-};
-
-struct TileMeta {
-    int z = 0;
-    int x = 0;
-    int y = 0;
-    TileBBox bbox;
-    double geometric_error = 0.0;
-    std::string tileset_rel; // relative to output root
-    std::string orig_tileset_rel; // original flat path (tile/z/x/y.json) used during generation
-    bool is_leaf = false;
-    std::vector<uint64_t> children_keys;
-    double max_child_ge = 0.0; // used when aggregating
-};
-
-static std::string tileset_path_for_node(int z, int x, int y, int min_z) {
-    if (z <= min_z) {
-        return "tileset.json";
-    }
-    std::filesystem::path p = "tile";
-    p /= std::to_string(z);
-    p /= std::to_string(x);
-    p /= std::to_string(y);
-    p /= "tileset.json";
-    return p.generic_string();
-}
-
-static inline uint64_t encode_key(int z, int x, int y) {
-    return (static_cast<uint64_t>(z) << 42) | (static_cast<uint64_t>(x) << 21) | static_cast<uint64_t>(y);
-}
+// 使用 shapefile 命名空间的业务数据结构
+using shapefile::TileBBox;
+using shapefile::TileMeta;
+using shapefile::QuadtreeCoord;
+using shapefile::mergeBBox;
+using shapefile::tilesetPathForNode;
 
 static TileBBox make_bbox_from_node(const bbox& b, double min_h, double max_h) {
-    TileBBox r;
-    r.minx = b.minx;
-    r.maxx = b.maxx;
-    r.miny = b.miny;
-    r.maxy = b.maxy;
-    r.minHeight = min_h;
-    r.maxHeight = max_h;
-    return r;
-}
-
-static TileBBox merge_bbox(const TileBBox& a, const TileBBox& b) {
-    TileBBox r;
-    r.minx = std::min(a.minx, b.minx);
-    r.maxx = std::max(a.maxx, b.maxx);
-    r.miny = std::min(a.miny, b.miny);
-    r.maxy = std::max(a.maxy, b.maxy);
-    r.minHeight = std::min(a.minHeight, b.minHeight);
-    r.maxHeight = std::max(a.maxHeight, b.maxHeight);
-    return r;
+    return TileBBox(b.minx, b.maxx, b.miny, b.maxy, min_h, max_h);
 }
 
 struct Polygon_Mesh
@@ -265,40 +225,7 @@ struct Polygon_Mesh
     std::map<std::string, nlohmann::json> properties;
 };
 
-static std::vector<double> flatten_mat(const glm::dmat4& m) {
-    std::vector<double> mat(16, 0.0);
-    for (int c = 0; c < 4; ++c) {
-        for (int r = 0; r < 4; ++r) {
-            mat[c * 4 + r] = m[c][r];
-        }
-    }
-    return mat;
-}
 
-static glm::dmat4 make_transform(double center_lon_deg, double center_lat_deg, double min_height) {
-    // 使用CoordinateTransformer的静态方法计算ENU->ECEF变换矩阵
-    return coords::CoordinateTransformer::CalcEnuToEcefMatrix(center_lon_deg, center_lat_deg, min_height);
-}
-
-static nlohmann::json box_to_json(double cx, double cy, double cz, double half_w, double half_h, double half_z) {
-    double vals[12] = {
-        cx, cy, cz,
-        half_w, 0.0, 0.0,
-        0.0, half_h, 0.0,
-        0.0, 0.0, half_z
-    };
-    nlohmann::json arr = nlohmann::json::array();
-    for (int i = 0; i < 12; ++i) arr.push_back(vals[i]);
-    return arr;
-}
-
-static double compute_geometric_error_from_spans(double span_x, double span_y, double span_z) {
-    double max_span = std::max({span_x, span_y, span_z});
-    if (max_span <= 0.0) {
-        return 0.0;
-    }
-    return max_span / 20.0;
-}
 
 static bool write_node_tileset(const TileMeta& node,
                                const std::unordered_map<uint64_t, TileMeta>& nodes,
@@ -306,88 +233,23 @@ static bool write_node_tileset(const TileMeta& node,
                                int min_z_root,
                                double global_center_lon,
                                double global_center_lat) {
-    double center_lon = (node.bbox.minx + node.bbox.maxx) * 0.5;
-    double center_lat = (node.bbox.miny + node.bbox.maxy) * 0.5;
-    double width_deg = (node.bbox.maxx - node.bbox.minx);
-    double height_deg = (node.bbox.maxy - node.bbox.miny);
-    double lon_rad_span = degree2rad(width_deg);
-    double lat_rad_span = degree2rad(height_deg);
-    const double BOUNDING_VOLUME_SCALE_FACTOR = 2.0;
-    double half_w = longti_to_meter(lon_rad_span * 0.5, degree2rad(center_lat)) * 1.05 * BOUNDING_VOLUME_SCALE_FACTOR;
-    double half_h = lati_to_meter(lat_rad_span * 0.5) * 1.05 * BOUNDING_VOLUME_SCALE_FACTOR;
-    double half_z = (node.bbox.maxHeight - node.bbox.minHeight) * 0.5 * BOUNDING_VOLUME_SCALE_FACTOR;
-    double min_h = node.bbox.minHeight;
+    // 使用适配器将 Shapefile 业务数据结构转换为标准 3D Tiles
+    shapefile::AdapterConfig config;
+    config.boundingVolumeScaleFactor = 2.0;
+    config.applyRootTransform = true;
+    config.minZRoot = min_z_root;
 
-    glm::dmat4 parent_global = make_transform(center_lon, center_lat, min_h);
+    shapefile::ShapefileTilesetAdapter adapter(global_center_lon, global_center_lat, config);
 
-    double center_offset_x = longti_to_meter(degree2rad(center_lon - global_center_lon), degree2rad(global_center_lat));
-    double center_offset_y = lati_to_meter(degree2rad(center_lat - global_center_lat));
+    // 构建 Tileset
+    tileset::Tileset tileset = adapter.buildTileset(node, nodes);
 
-    nlohmann::json root;
-    root["asset"] = { {"version", "1.0"}, {"gltfUpAxis", "Z"} };
-    root["geometricError"] = node.geometric_error;
-
-    nlohmann::json root_node;
-    if (node.z == min_z_root) {
-        root_node["transform"] = flatten_mat(parent_global);
-    }
-    root_node["boundingVolume"]["box"] = box_to_json(center_offset_x, center_offset_y, half_z, half_w, half_h, half_z);
-    root_node["refine"] = "REPLACE";
-    root_node["geometricError"] = node.geometric_error;
-
-    for (auto child_key : node.children_keys) {
-        auto it = nodes.find(child_key);
-        if (it == nodes.end()) {
-            continue;
-        }
-        const TileMeta& child = it->second;
-        nlohmann::json child_node;
-        double child_center_lon = (child.bbox.minx + child.bbox.maxx) * 0.5;
-        double child_center_lat = (child.bbox.miny + child.bbox.maxy) * 0.5;
-        double child_lon_span = degree2rad(child.bbox.maxx - child.bbox.minx);
-        double child_lat_span = degree2rad(child.bbox.maxy - child.bbox.miny);
-        double child_half_w = longti_to_meter(child_lon_span * 0.5, degree2rad(child_center_lat)) * 1.05 * BOUNDING_VOLUME_SCALE_FACTOR;
-        double child_half_h = lati_to_meter(child_lat_span * 0.5) * 1.05 * BOUNDING_VOLUME_SCALE_FACTOR;
-        double child_half_z = (child.bbox.maxHeight - child.bbox.minHeight) * 0.5 * BOUNDING_VOLUME_SCALE_FACTOR;
-        double child_min_h = child.bbox.minHeight;
-
-        double child_center_offset_x = longti_to_meter(degree2rad(child_center_lon - global_center_lon), degree2rad(global_center_lat));
-        double child_center_offset_y = lati_to_meter(degree2rad(child_center_lat - global_center_lat));
-
-        child_node["boundingVolume"]["box"] = box_to_json(
-            child_center_offset_x,
-            child_center_offset_y,
-            child_half_z,
-            child_half_w,
-            child_half_h,
-            child_half_z);
-        child_node["refine"] = "REPLACE";
-        child_node["geometricError"] = child.geometric_error;
-
-        std::filesystem::path parent_path = std::filesystem::path(dest_root) / node.tileset_rel;
-        std::filesystem::path parent_dir = parent_path.parent_path();
-        std::error_code ec;
-        std::filesystem::create_directories(parent_dir, ec);
-
-        std::filesystem::path child_path = std::filesystem::path(dest_root) / child.tileset_rel;
-        std::filesystem::path child_uri = std::filesystem::relative(child_path, parent_dir);
-        child_node["content"]["uri"] = "./" + child_uri.generic_string();
-
-        root_node["children"].push_back(child_node);
-    }
-
-    root["root"] = root_node;
-
+    // 使用 TilesetWriter 写入文件
+    tileset::TilesetWriter writer;
     std::filesystem::path out_path = std::filesystem::path(dest_root) / node.tileset_rel;
     std::filesystem::create_directories(out_path.parent_path());
 
-    std::ofstream ofs(out_path);
-    if (!ofs.is_open()) {
-        LOG_E("write file %s fail", out_path.string().c_str());
-        return false;
-    }
-    ofs << root.dump(2);
-    return true;
+    return writer.writeToFile(tileset, out_path.string());
 }
 
 static void build_hierarchical_tilesets(const std::vector<TileMeta>& leaves,
@@ -401,7 +263,7 @@ static void build_hierarchical_tilesets(const std::vector<TileMeta>& leaves,
         // trivial case: wrap single leaf into a root tileset that references it
         std::unordered_map<uint64_t, TileMeta> nodes;
         auto leaf = leaves.front();
-        uint64_t leaf_key = encode_key(leaf.z, leaf.x, leaf.y);
+        uint64_t leaf_key = QuadtreeCoord(leaf.z, leaf.x, leaf.y).encode();
         nodes[leaf_key] = leaf;
 
         TileMeta root;
@@ -424,7 +286,7 @@ static void build_hierarchical_tilesets(const std::vector<TileMeta>& leaves,
         leaf.tileset_rel = leaf_path.generic_string();
         nodes[leaf_key] = leaf;
 
-        nodes[encode_key(root.z, root.x, root.y)] = root;
+        nodes[QuadtreeCoord(root.z, root.x, root.y).encode()] = root;
 
         write_node_tileset(root, nodes, dest_root, root.z, global_center_lon, global_center_lat);
         return;
@@ -436,7 +298,7 @@ static void build_hierarchical_tilesets(const std::vector<TileMeta>& leaves,
     int min_z = std::numeric_limits<int>::max();
 
     for (const auto& leaf : leaves) {
-        uint64_t key = encode_key(leaf.z, leaf.x, leaf.y);
+        uint64_t key = QuadtreeCoord(leaf.z, leaf.x, leaf.y).encode();
         nodes[key] = leaf;
         current_keys.push_back(key);
         max_z = std::max(max_z, leaf.z);
@@ -458,7 +320,7 @@ static void build_hierarchical_tilesets(const std::vector<TileMeta>& leaves,
             if (pz < 0) continue;
             int px = child.x / 2;
             int py = child.y / 2;
-            uint64_t pkey = encode_key(pz, px, py);
+            uint64_t pkey = QuadtreeCoord(pz, px, py).encode();
             auto it = parent_level.find(pkey);
             if (it == parent_level.end()) {
                 TileMeta parent;
@@ -472,7 +334,7 @@ static void build_hierarchical_tilesets(const std::vector<TileMeta>& leaves,
                 parent.tileset_rel = (std::filesystem::path("tile") / std::to_string(pz) / std::to_string(px) / std::to_string(py) / "tileset.json").generic_string();
                 parent_level[pkey] = parent;
             } else {
-                it->second.bbox = merge_bbox(it->second.bbox, child.bbox);
+                it->second.bbox = mergeBBox(it->second.bbox, child.bbox);
                 it->second.max_child_ge = std::max(it->second.max_child_ge, child.geometric_error);
                 it->second.children_keys.push_back(key);
             }
@@ -499,12 +361,12 @@ static void build_hierarchical_tilesets(const std::vector<TileMeta>& leaves,
         root.max_child_ge = 0.0;
         for (auto key : current_keys) {
             const auto& child = nodes[key];
-            root.bbox = merge_bbox(root.bbox, child.bbox);
+            root.bbox = mergeBBox(root.bbox, child.bbox);
             root.max_child_ge = std::max(root.max_child_ge, child.geometric_error);
             root.children_keys.push_back(key);
         }
         root.geometric_error = root.max_child_ge * 2.0;
-        uint64_t root_key = encode_key(root.z, root.x, root.y);
+        uint64_t root_key = QuadtreeCoord(root.z, root.x, root.y).encode();
         nodes[root_key] = root;
         current_keys = {root_key};
         levels.push_back(current_keys);
@@ -519,7 +381,7 @@ static void build_hierarchical_tilesets(const std::vector<TileMeta>& leaves,
         std::unordered_map<uint64_t, TileMeta> updated;
         for (auto& kv : nodes) {
             TileMeta meta = kv.second;
-            meta.tileset_rel = tileset_path_for_node(meta.z, meta.x, meta.y, min_z_all);
+            meta.tileset_rel = tilesetPathForNode(QuadtreeCoord(meta.z, meta.x, meta.y), min_z_all);
             updated[kv.first] = meta;
         }
         nodes = std::move(updated);
@@ -1145,7 +1007,8 @@ shp23dtile(const ShapeConversionParams* params)
         double tile_z_m = std::max(max_height, 5.0); // height range already in meters (extrusion height)
 
         // Geometric error per commit fc40399...: max span divided by 20
-        double ge = compute_geometric_error_from_spans(tile_w_m, tile_h_m, tile_z_m);
+        double max_span = std::max({tile_w_m, tile_h_m, tile_z_m});
+        double ge = max_span > 0.0 ? max_span / 20.0 : 0.0;
 
         // Use LOD configuration from params (already extracted at function start)
         const bool lod_enabled = lod_cfg.enable_lod && !lod_cfg.levels.empty();
@@ -1181,8 +1044,9 @@ shp23dtile(const ShapeConversionParams* params)
                 write_file(b3dm_full.string().c_str(), b3dm_buf.data(), b3dm_buf.size());
 
                 lod_names.push_back(filename);
-                double span_z = std::max(tile_z_m, 5.0); // avoid near-zero vertical span
-                double base_ge = compute_geometric_error_from_spans(tile_w_m, tile_h_m, span_z);
+                double span_z = std::max(tile_z_m, 5.0); // avoid near-zero vertical vertical span
+                double max_span_lod = std::max({tile_w_m, tile_h_m, span_z});
+                double base_ge = max_span_lod > 0.0 ? max_span_lod / 20.0 : 0.0;
                 double ratio = std::clamp(static_cast<double>(lvl_ratio), 0.01, 1.0);
                 // coarser LOD (smaller ratio) gets larger geometric error
                 double ge_level = base_ge * std::max(1.0, 1.0 / std::sqrt(ratio));
@@ -1227,7 +1091,15 @@ shp23dtile(const ShapeConversionParams* params)
                 nlohmann::json node_json;
                 node_json["refine"] = "REPLACE";
                 node_json["geometricError"] = lod_errors[idx];
-                node_json["boundingVolume"]["box"] = box_to_json(center_offset_x, center_offset_y, bucket_center_z, half_w, half_h, bucket_half_z);
+                double box_vals[12] = {
+                    center_offset_x, center_offset_y, bucket_center_z,
+                    half_w, 0.0, 0.0,
+                    0.0, half_h, 0.0,
+                    0.0, 0.0, bucket_half_z
+                };
+                nlohmann::json box_arr = nlohmann::json::array();
+                for (int i = 0; i < 12; ++i) box_arr.push_back(box_vals[i]);
+                node_json["boundingVolume"]["box"] = box_arr;
                 node_json["content"]["uri"] = std::string("./") + lod_names[idx];
                 return node_json;
             };
