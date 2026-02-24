@@ -25,6 +25,7 @@
 #include <glm/glm.hpp>
 #include <unordered_map>
 #include <vector>
+#include <filesystem>
 
 namespace shapefile {
 
@@ -33,7 +34,7 @@ namespace shapefile {
  */
 struct AdapterConfig {
     // 包围盒扩展系数 (防止浮点误差导致的裁剪)
-    double boundingVolumeScaleFactor = 2.0;
+    double boundingVolumeScaleFactor = 1.0;
 
     // 几何误差缩放系数
     double geometricErrorScale = 0.5;
@@ -43,6 +44,15 @@ struct AdapterConfig {
 
     // 最小层级 (该层级及以下的瓦片为根节点)
     int minZRoot = 0;
+
+    // 是否启用 LOD
+    bool enableLOD = false;
+
+    // LOD 级别数量 (默认 3: lod0, lod1, lod2)
+    int lodLevelCount = 3;
+
+    // LOD 几何误差比例 [lod0, lod1, lod2, ...]
+    std::vector<double> lodErrorRatios = {1.0, 0.5, 0.25};
 };
 
 /**
@@ -166,9 +176,12 @@ inline tileset::Box ShapefileTilesetAdapter::convertBoundingBox(const TileBBox& 
     double offsetX, offsetY;
     computeEnuOffset(centerLon, centerLat, offsetX, offsetY);
 
-    // 5. 创建 Box (中心点 + 半轴长度)
+    // 5. 计算 Z 轴中心点 (应该是 (minHeight + maxHeight) / 2，而不是 halfZ)
+    double centerZ = (bbox.minHeight + bbox.maxHeight) * 0.5;
+
+    // 6. 创建 Box (中心点 + 半轴长度)
     return tileset::Box::fromCenterAndHalfLengths(
-        offsetX, offsetY, halfZ, halfW, halfH, halfZ);
+        offsetX, offsetY, centerZ, halfW, halfH, halfZ);
 }
 
 inline double ShapefileTilesetAdapter::computeGeometricError(const TileBBox& bbox) const {
@@ -230,8 +243,9 @@ inline tileset::Tile ShapefileTilesetAdapter::convertTile(const TileMeta& meta) 
         tile.setTransform(transform);
     }
 
-    // 5. 如果是叶子节点，设置内容 URI
+    // 5. 如果是叶子节点，设置内容
     if (meta.is_leaf && !meta.tileset_rel.empty()) {
+        // 直接设置 content（指向 B3DM 或子 tileset.json）
         tile.setContent(meta.tileset_rel);
     }
 
