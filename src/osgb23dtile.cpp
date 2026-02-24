@@ -30,6 +30,7 @@
 #include <nlohmann/json.hpp>
 #include "extern.h"
 #include "coordinate_transformer.h"
+#include "b3dm/b3dm_writer.h"
 
 using namespace std;
 
@@ -1251,8 +1252,6 @@ bool osgb2glb_buf(std::string path, std::string& glb_buff, MeshInfo& mesh_info, 
 
 bool osgb2b3dm_buf(std::string path, std::string& b3dm_buf, TileBox& tile_box, int node_type, bool enable_texture_compress = false, bool enable_meshopt = false, bool enable_draco = false, bool enable_unlit = true)
 {
-    using nlohmann::json;
-
     std::string glb_buf;
     MeshInfo minfo;
     bool ret = osgb2glb_buf(path, glb_buf, minfo, node_type, enable_texture_compress, enable_meshopt, enable_draco, enable_unlit);
@@ -1262,58 +1261,11 @@ bool osgb2b3dm_buf(std::string path, std::string& b3dm_buf, TileBox& tile_box, i
     tile_box.max = minfo.max;
     tile_box.min = minfo.min;
 
-    int mesh_count = 1;
-    std::string feature_json_string;
-    feature_json_string += "{\"BATCH_LENGTH\":";
-    feature_json_string += std::to_string(mesh_count);
-    feature_json_string += "}";
-    while ((feature_json_string.size()+28) % 8 != 0 ) {
-        feature_json_string.push_back(' ');
-    }
-    json batch_json;
-    std::vector<int> ids;
-    for (int i = 0; i < mesh_count; ++i) {
-        ids.push_back(i);
-    }
-    std::vector<std::string> names;
-    for (int i = 0; i < mesh_count; ++i) {
-        std::string mesh_name = "mesh_";
-        mesh_name += std::to_string(i);
-        names.push_back(mesh_name);
-    }
-    batch_json["batchId"] = ids;
-    batch_json["name"] = names;
-    std::string batch_json_string = batch_json.dump();
-    while (batch_json_string.size() % 8 != 0 ) {
-        batch_json_string.push_back(' ');
-    }
+    // 使用统一的 B3DM 写入接口
+    constexpr int mesh_count = 1;
+    b3dm_buf = b3dm::wrapGlbToB3dmSimple(glb_buf, mesh_count);
 
-
-    // how length total ?
-    //test
-    //feature_json_string.clear();
-    //batch_json_string.clear();
-    //end-test
-
-    int feature_json_len = feature_json_string.size();
-    int feature_bin_len = 0;
-    int batch_json_len = batch_json_string.size();
-    int batch_bin_len = 0;
-    int total_len = 28 /*header size*/ + feature_json_len + batch_json_len + glb_buf.size();
-
-    b3dm_buf += "b3dm";
-    int version = 1;
-    put_val(b3dm_buf, version);
-    put_val(b3dm_buf, total_len);
-    put_val(b3dm_buf, feature_json_len);
-    put_val(b3dm_buf, feature_bin_len);
-    put_val(b3dm_buf, batch_json_len);
-    put_val(b3dm_buf, batch_bin_len);
-    //put_val(b3dm_buf, total_len);
-    b3dm_buf.append(feature_json_string.begin(),feature_json_string.end());
-    b3dm_buf.append(batch_json_string.begin(),batch_json_string.end());
-    b3dm_buf.append(glb_buf);
-    return true;
+    return !b3dm_buf.empty();
 }
 
 std::vector<double> convert_bbox(TileBox tile) {

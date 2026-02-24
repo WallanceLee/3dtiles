@@ -97,7 +97,6 @@ private:
     // Converters
     // Returns filename created and the tight bounding box of the content (in ENU)
     std::pair<std::string, osg::BoundingBoxd> createB3DM(const std::vector<InstanceRef>& instances, const std::string& tilePath, const std::string& tileName, const SimplificationParams& simParams = SimplificationParams());
-    std::string createI3DM(MeshInstanceInfo* meshInfo, const std::vector<int>& transformIndices, const std::string& tilePath, const std::string& tileName, const SimplificationParams& simParams = SimplificationParams());
 
     // Helpers
     void writeTilesetJson(const std::string& basePath, const osg::BoundingBox& globalBounds, const nlohmann::json& rootContent);

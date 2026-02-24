@@ -1,6 +1,7 @@
 #include "FBXPipeline.h"
 #include "extern.h"
 #include "coordinate_transformer.h"
+#include "b3dm/b3dm_writer.h"
 #include <osg/MatrixTransform>
 #include <osg/Geode>
 #include <osg/Material>
@@ -28,31 +29,6 @@
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
-
-// Constants
-const uint32_t B3DM_MAGIC = 0x6D643362;
-const uint32_t I3DM_MAGIC = 0x6D643369;
-
-struct B3dmHeader {
-    uint32_t magic;
-    uint32_t version;
-    uint32_t byteLength;
-    uint32_t featureTableJSONByteLength;
-    uint32_t featureTableBinaryByteLength;
-    uint32_t batchTableJSONByteLength;
-    uint32_t batchTableBinaryByteLength;
-};
-
-struct I3dmHeader {
-    uint32_t magic;
-    uint32_t version;
-    uint32_t byteLength;
-    uint32_t featureTableJSONByteLength;
-    uint32_t featureTableBinaryByteLength;
-    uint32_t batchTableJSONByteLength;
-    uint32_t batchTableBinaryByteLength;
-    uint32_t gltfFormat; // 0: uri, 1: embedded
-};
 
 // Helper to check point in box
 bool isPointInBox(const osg::Vec3d& p, const osg::BoundingBox& b) {
@@ -2053,90 +2029,58 @@ std::pair<std::string, osg::BoundingBoxd> FBXPipeline::createB3DM(const std::vec
     std::string filename = tileName + ".b3dm";
     std::string fullPath = (fs::path(tilePath) / filename).string();
 
-    std::ofstream outfile(fullPath, std::ios::binary);
-    if (!outfile) {
-        LOG_E("Failed to create B3DM file: %s", fullPath.c_str());
-        return {"", contentBox};
-    }
-
     // Serialize GLB to memory
     tinygltf::TinyGLTF gltf;
     std::stringstream ss;
     gltf.WriteGltfSceneToStream(&model, ss, false, true); // pretty=false, binary=true
     std::string glbData = ss.str();
 
-    // Create Feature Table JSON
-    json featureTable;
-
-    // For single instance (or merged mesh), if we have only 1 batch ID (0),
-    // we can simplify by setting BATCH_LENGTH to 0, which implies no batching.
-    // This avoids issues with _BATCHID attribute requirement if BATCH_LENGTH > 0.
-    // However, if we do have multiple batches, we set it.
-    if (batchIdCounter == 0) {
-        featureTable["BATCH_LENGTH"] = 0;
-    } else {
-        featureTable["BATCH_LENGTH"] = batchIdCounter;
-    }
-
-    std::string featureTableString = featureTable.dump();
-
-    // Calculate Padding
-    // Header (28 bytes) + FeatureTableJSON (N bytes) + Padding (P bytes)
-    // Spec: "The byte length of the Feature Table JSON ... must be aligned to 8 bytes."
-    // This strictly means featureTableJSONByteLength % 8 == 0.
-
-    size_t jsonLen = featureTableString.size();
-    size_t padding = (8 - (jsonLen % 8)) % 8;
-    for(size_t i=0; i<padding; ++i) {
-        featureTableString += " ";
-    }
-
-    // Serialize Batch Table
-    std::string batchTableString = "";
-    if (!batchTableJson.empty()) {
-        batchTableString = batchTableJson.dump();
-        size_t batchPadding = (8 - (batchTableString.size() % 8)) % 8;
-        for(size_t i=0; i<batchPadding; ++i) {
-            batchTableString += " ";
+    // 使用统一的 B3DM 写入接口
+    b3dm::BatchData batchData;
+    if (batchIdCounter > 0) {
+        batchData.batchIds.reserve(batchIdCounter);
+        for (int i = 0; i < batchIdCounter; ++i) {
+            batchData.batchIds.push_back(i);
         }
     }
 
-    // Now featureTableString.size() is multiple of 8.
-    // Header is 28 bytes.
-    // 28 + featureTableString.size() is 4 mod 8.
-    // So GLB starts at 4 mod 8. This is valid for GLB (4-byte alignment).
-
-    // Also, align GLB data size to 8 bytes (Spec recommendation for B3DM body end? No, just good practice)
-    // Actually, B3DM byteLength doesn't need to be aligned, but let's align it to 8 bytes for safety.
-    size_t glbLen = glbData.size();
-    size_t glbPadding = (8 - (glbLen % 8)) % 8;
-    for(size_t i=0; i<glbPadding; ++i) {
-        glbData += '\0';
+    // 从 batchTableJson 中提取 name 和其他属性
+    if (batchTableJson.contains("name")) {
+        auto& names = batchTableJson["name"];
+        for (auto& name : names) {
+            batchData.names.push_back(name.get<std::string>());
+        }
+        batchTableJson.erase("name");
     }
 
-    // Write header
-    B3dmHeader header;
-    header.magic = B3DM_MAGIC;
-    header.version = 1;
-    header.featureTableJSONByteLength = (uint32_t)featureTableString.size();
-    header.featureTableBinaryByteLength = 0;
-    header.batchTableJSONByteLength = (uint32_t)batchTableString.size();
-    header.batchTableBinaryByteLength = 0;
-    header.byteLength = (uint32_t)(sizeof(B3dmHeader) + featureTableString.size() + batchTableString.size() + glbData.size());
-
-    outfile.write(reinterpret_cast<const char*>(&header), sizeof(B3dmHeader));
-    outfile.write(featureTableString.c_str(), featureTableString.size());
-    if (!batchTableString.empty()) {
-        outfile.write(batchTableString.c_str(), batchTableString.size());
+    // 添加其他属性到 batchData
+    for (auto& [key, value] : batchTableJson.items()) {
+        if (value.is_array()) {
+            std::vector<nlohmann::json> attrValues;
+            for (auto& v : value) {
+                attrValues.push_back(v);
+            }
+            batchData.attributes[key] = std::move(attrValues);
+        }
     }
-    outfile.write(glbData.data(), glbData.size());
-    outfile.close();
+
+    b3dm::Options opts;
+    opts.alignTo8Bytes = true;
+    opts.allowEmptyBatch = (batchIdCounter == 0);
+
+    std::string b3dmData = b3dm::wrapGlbToB3dm(glbData, batchData, opts);
+    if (b3dmData.empty()) {
+        LOG_E("Failed to create B3DM data for tile: %s", tileName.c_str());
+        return {"", contentBox};
+    }
+
+    // 写入文件
+    if (!b3dm::writeB3dmToFile(fullPath, b3dmData)) {
+        LOG_E("Failed to write B3DM file: %s", fullPath.c_str());
+        return {"", contentBox};
+    }
 
     return {filename, contentBox};
-}
-
-std::string FBXPipeline::createI3DM(MeshInstanceInfo* meshInfo, const std::vector<int>& transformIndices, const std::string& tilePath, const std::string& tileName, const SimplificationParams& simParams) {
-    return "";
 }
 
 void FBXPipeline::writeTilesetJson(const std::string& basePath, const osg::BoundingBox& globalBounds, const nlohmann::json& rootContent) {

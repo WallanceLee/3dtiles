@@ -8,6 +8,7 @@
 #include "coordinate_transformer.h"
 #include "lod_pipeline.h"
 #include "shape.h"
+#include "b3dm/b3dm_writer.h"
 
 /* vcpkg path */
 #include <ogrsf_frmts.h>
@@ -1673,27 +1674,16 @@ std::string make_polymesh(std::vector<Polygon_Mesh> &meshes,
 }
 
 std::string make_b3dm(std::vector<Polygon_Mesh>& meshes, bool with_height, bool enable_simplify, std::optional<SimplificationParams> simplification_params, bool enable_draco, std::optional<DracoCompressionParams> draco_params) {
-    using nlohmann::json;
 
-    std::string feature_json_string;
-    feature_json_string += "{\"BATCH_LENGTH\":";
-    feature_json_string += std::to_string(meshes.size());
-    feature_json_string += "}";
-    while (feature_json_string.size() % 4 != 0 ) {
-        feature_json_string.push_back(' ');
-    }
+    // 使用统一的 B3DM 写入接口
+    b3dm::BatchData batchData;
+    batchData.batchIds.reserve(meshes.size());
+    batchData.names.reserve(meshes.size());
 
-    json batch_json;
-    std::vector<int> ids;
     for (int i = 0; i < meshes.size(); ++i) {
-        ids.push_back(i);
+        batchData.batchIds.push_back(i);
+        batchData.names.push_back(meshes[i].mesh_name);
     }
-    std::vector<std::string> names;
-    for (int i = 0; i < meshes.size(); ++i) {
-        names.push_back(meshes[i].mesh_name);
-    }
-    batch_json["batchId"] = ids;
-    batch_json["name"] = names;
 
     // Collect all attribute keys across meshes
     std::set<std::string> attribute_keys;
@@ -1704,59 +1694,35 @@ std::string make_b3dm(std::vector<Polygon_Mesh>& meshes, bool with_height, bool 
     }
 
     // Build per-attribute arrays aligned with batch ids
-    std::map<std::string, std::vector<nlohmann::json>> attribute_columns;
     for (const auto& key : attribute_keys) {
-        attribute_columns[key] = std::vector<nlohmann::json>(meshes.size(), nullptr);
-    }
-    for (int i = 0; i < meshes.size(); ++i) {
-        for (const auto& kv : meshes[i].properties) {
-            auto it = attribute_columns.find(kv.first);
-            if (it != attribute_columns.end()) {
-                it->second[i] = kv.second;
+        std::vector<nlohmann::json> values(meshes.size(), nullptr);
+        for (int i = 0; i < meshes.size(); ++i) {
+            auto it = meshes[i].properties.find(key);
+            if (it != meshes[i].properties.end()) {
+                values[i] = it->second;
             }
         }
-    }
-    for (const auto& kv : attribute_columns) {
-        batch_json[kv.first] = kv.second;
+        batchData.attributes[key] = std::move(values);
     }
 
+    // Add height attribute if needed
     if (with_height) {
-        std::vector<float> heights;
+        std::vector<nlohmann::json> heights;
+        heights.reserve(meshes.size());
         for (int i = 0; i < meshes.size(); ++i) {
             heights.push_back(meshes[i].height);
         }
-        batch_json["height"] = heights;
+        batchData.attributes["height"] = std::move(heights);
     }
 
-    std::string batch_json_string = batch_json.dump();
-    while (batch_json_string.size() % 4 != 0 ) {
-        batch_json_string.push_back(' ');
-    }
-
+    b3dm::Options opts;
+    opts.alignTo8Bytes = true;  // 统一使用 8 字节对齐
+    // 生成 GLB buffer
     std::string glb_buf = make_polymesh(meshes, enable_simplify, simplification_params, enable_draco, draco_params);
-    if (glb_buf.size() == 0) {
+    if (glb_buf.empty()) {
         LOG_E("make glb buffer failure");
         return std::string();
     }
 
-    int feature_json_len = feature_json_string.size();
-    int feature_bin_len = 0;
-    int batch_json_len = batch_json_string.size();
-    int batch_bin_len = 0;
-    int total_len = 28 /*header size*/ + feature_json_len + batch_json_len + glb_buf.size();
-
-    std::string b3dm_buf;
-    b3dm_buf += "b3dm";
-    int version = 1;
-    put_val(b3dm_buf, version);
-    put_val(b3dm_buf, total_len);
-    put_val(b3dm_buf, feature_json_len);
-    put_val(b3dm_buf, feature_bin_len);
-    put_val(b3dm_buf, batch_json_len);
-    put_val(b3dm_buf, batch_bin_len);
-    //put_val(b3dm_buf, total_len);
-    b3dm_buf.append(feature_json_string.begin(),feature_json_string.end());
-    b3dm_buf.append(batch_json_string.begin(),batch_json_string.end());
-    b3dm_buf.append(glb_buf);
-    return b3dm_buf;
+    return b3dm::wrapGlbToB3dm(glb_buf, batchData, opts);
 }
