@@ -14,6 +14,7 @@
 #include "tileset/tileset_types.h"
 #include "tileset/tileset_writer.h"
 #include "tileset/bounding_volume.h"
+#include "tileset/geometric_error.h"
 
 // Shapefile 业务层
 #include "shapefile/shapefile_tile.h"
@@ -1006,9 +1007,8 @@ shp23dtile(const ShapeConversionParams* params)
         double tile_h_m = lati_to_meter(degree2rad(box_height) * 1.05);
         double tile_z_m = std::max(max_height, 5.0); // height range already in meters (extrusion height)
 
-        // Geometric error per commit fc40399...: max span divided by 20
-        double max_span = std::max({tile_w_m, tile_h_m, tile_z_m});
-        double ge = max_span > 0.0 ? max_span / 20.0 : 0.0;
+        // Use tileset module's geometric error calculation
+        double ge = tileset::computeGeometricErrorFromSpans(tile_w_m, tile_h_m, tile_z_m);
 
         // Use LOD configuration from params (already extracted at function start)
         const bool lod_enabled = lod_cfg.enable_lod && !lod_cfg.levels.empty();
@@ -1017,10 +1017,11 @@ shp23dtile(const ShapeConversionParams* params)
         double half_h = tile_h_m * 0.5;
         double half_z = tile_z_m * 0.5;
 
-        auto build_lod_tree_for_meshes = [&](std::vector<Polygon_Mesh>& meshes,
-                             const std::string& name_prefix) -> std::pair<nlohmann::json, double> {
+        // Build LOD tiles using tileset module
+        auto build_lod_tiles = [&](std::vector<Polygon_Mesh>& meshes,
+                             const std::string& name_prefix) -> std::pair<tileset::Tile, double> {
             if (meshes.empty()) {
-                return {nlohmann::json(), -1.0};
+                return {tileset::Tile(), -1.0};
             }
 
             std::vector<std::string> lod_names;
@@ -1087,21 +1088,19 @@ shp23dtile(const ShapeConversionParams* params)
 
             auto [center_offset_x, center_offset_y] = project_to_local_meters(center_x, center_y);
 
-            auto make_lod_node = [&](size_t idx) {
-                nlohmann::json node_json;
-                node_json["refine"] = "REPLACE";
-                node_json["geometricError"] = lod_errors[idx];
-                double box_vals[12] = {
-                    center_offset_x, center_offset_y, bucket_center_z,
-                    half_w, 0.0, 0.0,
-                    0.0, half_h, 0.0,
-                    0.0, 0.0, bucket_half_z
-                };
-                nlohmann::json box_arr = nlohmann::json::array();
-                for (int i = 0; i < 12; ++i) box_arr.push_back(box_vals[i]);
-                node_json["boundingVolume"]["box"] = box_arr;
-                node_json["content"]["uri"] = std::string("./") + lod_names[idx];
-                return node_json;
+            // Create bounding box for tile
+            std::array<double, 12> box_values = {
+                center_offset_x, center_offset_y, bucket_center_z,
+                half_w, 0.0, 0.0,
+                0.0, half_h, 0.0,
+                0.0, 0.0, bucket_half_z
+            };
+            tileset::Box bbox(box_values);
+
+            auto make_lod_tile = [&](size_t idx) -> tileset::Tile {
+                tileset::Tile tile(bbox, lod_errors[idx]);
+                tile.setContent(std::string("./") + lod_names[idx]);
+                return tile;
             };
 
             std::vector<size_t> order(lod_names.size());
@@ -1112,39 +1111,39 @@ shp23dtile(const ShapeConversionParams* params)
                 });
             }
 
-            nlohmann::json lod_tree = make_lod_node(order.back());
+            // Build LOD hierarchy: finest LOD at bottom, coarsest at root
+            tileset::Tile lod_tree = make_lod_tile(order.back());
             for (int idx = static_cast<int>(order.size()) - 2; idx >= 0; --idx) {
                 size_t level_idx = order[idx];
-                nlohmann::json parent = make_lod_node(level_idx);
-                parent["children"].push_back(lod_tree);
-                lod_tree = parent;
+                tileset::Tile parent = make_lod_tile(level_idx);
+                parent.addChild(std::move(lod_tree));
+                lod_tree = std::move(parent);
             }
 
-            double root_ge = lod_tree.value("geometricError", 0.0);
+            double root_ge = lod_tree.geometricError;
             if (!lod_errors.empty()) {
                 // coarsest (smallest ratio) should sit at root with largest geometric error
                 root_ge = lod_errors[order.front()];
+                lod_tree.geometricError = root_ge;
             }
-            return {lod_tree, root_ge};
+            return {std::move(lod_tree), root_ge};
         };
 
         double leaf_root_ge = ge;
-        nlohmann::json leaf_root_node;
+        tileset::Tile leaf_root_tile;
 
-            auto res = build_lod_tree_for_meshes(v_meshes, "");
-            leaf_root_node = res.first;
+            auto res = build_lod_tiles(v_meshes, "");
+            leaf_root_tile = std::move(res.first);
             leaf_root_ge = res.second > 0 ? res.second : ge;
 
-        nlohmann::json leaf;
-        leaf["asset"] = { {"version", "1.0"}, {"gltfUpAxis", "Z"} };
-        leaf["geometricError"] = leaf_root_ge;
-        leaf["root"] = leaf_root_node;
+        // Use TilesetWriter to write leaf tileset
+        tileset::Tileset leaf_tileset(std::move(leaf_root_tile), leaf_root_ge);
+        leaf_tileset.setVersion("1.0");
+        leaf_tileset.setGltfUpAxis("Z");
 
-        std::ofstream ofs(tile_json_path);
-        if (!ofs.is_open()) {
+        tileset::TilesetWriter writer;
+        if (!writer.writeToFile(leaf_tileset, tile_json_path)) {
             LOG_E("write leaf tileset %s fail", tile_json_path.c_str());
-        } else {
-            ofs << leaf.dump(2);
         }
 
         TileMeta meta;
