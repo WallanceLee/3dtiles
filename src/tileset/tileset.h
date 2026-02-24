@@ -8,7 +8,6 @@
 #include "tileset_types.h"
 #include "tileset_writer.h"
 #include "transform.h"
-#include "converter_types.h"
 
 /**
  * @brief Tileset Module for 3D Tiles

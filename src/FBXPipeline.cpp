@@ -266,35 +266,16 @@ void FBXPipeline::run() {
 
     // --- End of Filtering ---
 
-    json rootJson;
-    if (settings.splitAverageByCount) {
-        LOG_I("Using average count split tiling...");
-        rootJson = buildAverageTiles(globalBounds, settings.outputPath);
-    } else {
-        LOG_I("Building Octree...");
-        buildOctree(rootNode);
-        LOG_I("Processing Nodes and Generating Tiles...");
-        rootJson = processNode(rootNode, settings.outputPath, -1, -1, "0");
-    }
+    LOG_I("Building Octree...");
+    buildOctree(rootNode);
 
-    LOG_I("--- Generated Tile Bounding Boxes (Sorted by Volume) ---");
-    std::sort(tileStats.begin(), tileStats.end(), [](const TileInfo& a, const TileInfo& b){
-        return a.volume > b.volume;
-    });
-
-    for(const auto& t : tileStats) {
-        LOG_I("Tile: '%s' Depth=%d Vol=%.3f Dim=(%.2f, %.2f, %.2f) Center=(%.2f, %.2f, %.2f) Min=(%.2f, %.2f, %.2f) Max=(%.2f, %.2f, %.2f)",
-              t.name.c_str(), t.depth, t.volume, t.dx, t.dy, t.dz,
-              t.center.x(), t.center.y(), t.center.z(),
-              t.minPt.x(), t.minPt.y(), t.minPt.z(),
-              t.maxPt.x(), t.maxPt.y(), t.maxPt.z());
-    }
+    LOG_I("Processing Nodes and Generating Tiles...");
+    tileset::Tile rootTile = processNode(rootNode, settings.outputPath, "0");
 
     LOG_I("Writing tileset.json...");
-    writeTilesetJson(settings.outputPath, globalBounds, rootJson);
+    writeTilesetJson(settings.outputPath, globalBounds, rootTile);
 
     LOG_I("FBXPipeline Finished.");
-    logLevelStats();
     {
         auto stats = loader->getStats();
         LOG_I("Material dedup: created=%d reused_by_hash=%d pointer_hits=%d unique_statesets=%zu",
@@ -1794,166 +1775,89 @@ void appendGeometryToModel(tinygltf::Model& model, const std::vector<InstanceRef
     model.defaultScene = 0;
 }
 
-json FBXPipeline::processNode(OctreeNode* node, const std::string& parentPath, int parentDepth, int childIndexAtParent, const std::string& treePath) {
-    json nodeJson;
-    nodeJson["refine"] = "REPLACE";
+tileset::Tile FBXPipeline::processNode(OctreeNode* node, const std::string& parentPath, const std::string& treePath) {
+    tileset::Tile tile;
+    tile.refine = "REPLACE";
 
-    osg::BoundingBoxd tightBox;
-    bool hasTightBox = false;
+    osg::BoundingBoxd contentBox;
+    bool hasContentBox = false;
 
-    // 2. Content
+    // 1. Content
     if (!node->content.empty()) {
-        // Naming convention: tile_{treePath}
         std::string tileName = "tile_" + treePath;
 
-        // Create content
-        // For B3DM
         SimplificationParams simParams;
         simParams.enable_simplification = settings.enableSimplify;
         simParams.target_ratio = 0.5f;
-        simParams.target_error = 0.0001f; // Base error
+        simParams.target_error = 0.0001f;
+
         auto result = createB3DM(node->content, parentPath, tileName, simParams);
         std::string contentUrl = result.first;
         osg::BoundingBoxd cBox = result.second;
 
         if (!contentUrl.empty()) {
-            nodeJson["content"] = {{"uri", contentUrl}};
+            tile.setContent(contentUrl);
             if (cBox.valid()) {
-                tightBox.expandBy(cBox);
-                hasTightBox = true;
+                contentBox = cBox;
+                hasContentBox = true;
             }
         }
     }
 
-    // 3. Children
-    if (!node->children.empty()) {
-        nodeJson["children"] = json::array();
-        for (size_t i = 0; i < node->children.size(); ++i) {
-            auto child = node->children[i];
-            json childJson = processNode(child, parentPath, node->depth, (int)i, treePath + "_" + std::to_string(i));
-            bool isEmptyChild = (!childJson.contains("content")) && (!childJson.contains("children") || childJson["children"].empty());
-            if (!isEmptyChild) {
-                nodeJson["children"].push_back(childJson);
-                try {
-                    auto& cBoxJson = childJson["boundingVolume"]["box"];
-                    if (cBoxJson.is_array() && cBoxJson.size() == 12) {
-                        double cx = cBoxJson[0];
-                        double cy = cBoxJson[1];
-                        double cz = cBoxJson[2];
-                        double dx = cBoxJson[3];
-                        double dy = cBoxJson[7];
-                        double dz = cBoxJson[11];
-                        tightBox.expandBy(osg::Vec3d(cx - dx, cy - dy, cz - dz));
-                        tightBox.expandBy(osg::Vec3d(cx + dx, cy + dy, cz + dz));
-                        hasTightBox = true;
-                    }
-                } catch (...) {}
-            } else {
-                LOG_I("Filtered empty tile: parentDepth=%d childIndex=%d nodes=%zu", node->depth, (int)i, node->children[i]->content.size());
-            }
+    // 2. Children
+    for (size_t i = 0; i < node->children.size(); ++i) {
+        tileset::Tile childTile = processNode(node->children[i], parentPath, treePath + "_" + std::to_string(i));
+        // 只有非空子节点才添加
+        if (childTile.content || !childTile.children.empty()) {
+            tile.addChild(std::move(childTile));
         }
     }
 
-    // 1. Calculate Geometric Error and Bounding Volume
-    double diagonal = 0.0;
-    if (hasTightBox) {
-        double dx = tightBox.xMax() - tightBox.xMin();
-        double dy = tightBox.yMax() - tightBox.yMin();
-        double dz = tightBox.zMax() - tightBox.zMin();
-        double diagonalOriginal = std::sqrt(dx*dx + dy*dy + dz*dz);
+    // 3. Calculate Bounding Volume and Geometric Error
+    double cx, cy, cz, hx, hy, hz;
 
-        double cx = tightBox.center().x();
-        double cy = tightBox.center().y();
-        double cz = tightBox.center().z();
-        double hx = (tightBox.xMax() - tightBox.xMin()) / 2.0;
-        double hy = (tightBox.yMax() - tightBox.yMin()) / 2.0;
-        double hz = (tightBox.zMax() - tightBox.zMin()) / 2.0;
+    if (hasContentBox) {
+        // 使用content box
+        cx = contentBox.center().x();
+        cy = contentBox.center().y();
+        cz = contentBox.center().z();
+        hx = (contentBox.xMax() - contentBox.xMin()) / 2.0 * 1.25;
+        hy = (contentBox.yMax() - contentBox.yMin()) / 2.0 * 1.25;
+        hz = (contentBox.zMax() - contentBox.zMin()) / 2.0 * 1.25;
 
-        // Add small padding to avoid near-plane culling or precision issues
-        hx = std::max(hx * 1.25, 1e-6);
-        hy = std::max(hy * 1.25, 1e-6);
-        hz = std::max(hz * 1.25, 1e-6);
-        diagonal = 2.0 * std::sqrt(hx*hx + hy*hy + hz*hz);
-        LOG_I("Node depth=%d tightBox center=(%.3f,%.3f,%.3f) halfAxes=(%.3f,%.3f,%.3f) diagOriginal=%.3f diagInflated=%.3f inflate=1.25", node->depth, cx, cy, cz, hx, hy, hz, diagonalOriginal, diagonal);
-
-        nodeJson["boundingVolume"] = {
-            {"box", {
-                cx, cy, cz,
-                hx, 0, 0,
-                0, hy, 0,
-                0, 0, hz
-            }}
-        };
+        LOG_I("Node depth=%d contentBox center=(%.3f,%.3f,%.3f) halfAxes=(%.3f,%.3f,%.3f)",
+              node->depth, cx, cy, cz, hx, hy, hz);
+    } else if (!tile.children.empty() && tile.computeBoundingVolumeFromChildren()) {
+        // 从子节点计算bounding volume
+        tile.updateGeometricErrorFromChildren();
+        LOG_I("Node depth=%d computed from children children=%zu ge=%.3f",
+              node->depth, tile.children.size(), tile.geometricError);
+        return tile;
     } else {
-        // Fallback: Transform node->bbox from Y-up to Z-up
-        double cx = node->bbox.center().x();
-        double cy = node->bbox.center().y();
-        double cz = node->bbox.center().z();
+        // Fallback: 使用node->bbox并转换坐标系 (Y-up to Z-up)
+        cx = node->bbox.center().x();
+        cy = -node->bbox.center().z();  // Y-up to Z-up
+        cz = node->bbox.center().y();
 
-        double extentX = (node->bbox.xMax() - node->bbox.xMin()) / 2.0;
-        double extentY = (node->bbox.yMax() - node->bbox.yMin()) / 2.0;
-        double extentZ = (node->bbox.zMax() - node->bbox.zMin()) / 2.0;
+        hx = (node->bbox.xMax() - node->bbox.xMin()) / 2.0;
+        hy = (node->bbox.zMax() - node->bbox.zMin()) / 2.0;
+        hz = (node->bbox.yMax() - node->bbox.yMin()) / 2.0;
 
-        extentX = std::max(extentX, 1e-6);
-        extentY = std::max(extentY, 1e-6);
-        extentZ = std::max(extentZ, 1e-6);
-        diagonal = 2.0 * std::sqrt(extentX*extentX + extentY*extentY + extentZ*extentZ);
-        LOG_I("Node depth=%d fallbackBox center=(%.3f,%.3f,%.3f) halfAxes=(%.3f,%.3f,%.3f) diag=%.3f", node->depth, cx, -cz, cy, extentX, extentZ, extentY, diagonal);
-
-        diagonal = std::sqrt(extentX*extentX*4 + extentY*extentY*4 + extentZ*extentZ*4);
-
-        // Collect Tile Stats
-        double dimX = extentX * 2.0;
-        double dimY = extentY * 2.0;
-        double dimZ = extentZ * 2.0;
-        double vol = dimX * dimY * dimZ;
-        std::string tName = "Node_d" + std::to_string(node->depth) + "_i" + std::to_string(childIndexAtParent);
-        if (!node->content.empty()) tName += "_Content";
-
-        tileStats.push_back({
-            tName, node->depth, vol, dimX, dimY, dimZ,
-            osg::Vec3d(cx, cy, cz),
-            osg::Vec3d(cx - extentX, cy - extentY, cz - extentZ),
-            osg::Vec3d(cx + extentX, cy + extentY, cz + extentZ)
-        });
-
-        nodeJson["boundingVolume"] = {
-            {"box", {
-                cx, -cz, cy,           // Center transformed
-                extentX, 0, 0,         // X axis
-                0, extentZ, 0,         // Y axis (was Z)
-                0, 0, extentY          // Z axis (was Y)
-            }}
-        };
+        LOG_I("Node depth=%d fallbackBox center=(%.3f,%.3f,%.3f) halfAxes=(%.3f,%.3f,%.3f)",
+              node->depth, cx, cy, cz, hx, hy, hz);
     }
 
-    // Geometric error = scale * diagonal (no clamp). Ensure > 0 by epsilon if degenerate.
-    double geOut = std::max(1e-3, settings.geScale * diagonal);
-    nodeJson["geometricError"] = geOut;
-    std::string refineMode = "REPLACE";
-    nodeJson["refine"] = refineMode;
-    LOG_I("Node depth=%d isLeaf=%d content=%zu children=%zu geScale=%.3f geOut=%.3f refine=%s", node->depth, (int)node->isLeaf(), node->content.size(), node->children.size(), settings.geScale, geOut, refineMode.c_str());
-    {
-        auto& acc = levelStats[node->depth];
-        acc.count += 1;
-        acc.sumDiag += diagonal;
-        acc.sumGe += geOut;
-        if (hasTightBox) acc.tightCount += 1; else acc.fallbackCount += 1;
-        if (refineMode == "ADD") acc.refineAdd += 1; else acc.refineReplace += 1;
+    // 设置BoundingVolume
+    tile.boundingVolume = tileset::Box::fromCenterAndHalfLengths(cx, cy, cz, hx, hy, hz);
 
-        // Log contained nodes
-        if (!node->content.empty()) {
-            std::string tName = "Node_d" + std::to_string(node->depth) + "_i" + std::to_string(childIndexAtParent);
-            if (!node->content.empty()) tName += "_Content";
+    // 计算GeometricError
+    tile.geometricError = tileset::computeGeometricError(tile.boundingVolume, settings.geScale);
 
-            for (const auto& ref : node->content) {
-                std::string nName = (ref.transformIndex < ref.meshInfo->nodeNames.size()) ? ref.meshInfo->nodeNames[ref.transformIndex] : "unknown";
-                LOG_I("Tile: %s contains Node: %s", tName.c_str(), nName.c_str());
-            }
-        }
-    }
+    LOG_I("Node depth=%d isLeaf=%d content=%zu children=%zu geScale=%.3f geOut=%.3f refine=%s",
+          node->depth, (int)node->isLeaf(), node->content.size(), node->children.size(),
+          settings.geScale, tile.geometricError, tile.refine.c_str());
 
-    return nodeJson;
+    return tile;
 }
 
 std::pair<std::string, osg::BoundingBoxd> FBXPipeline::createB3DM(const std::vector<InstanceRef>& instances, const std::string& tilePath, const std::string& tileName, const SimplificationParams& simParams) {
@@ -2083,273 +1987,48 @@ std::pair<std::string, osg::BoundingBoxd> FBXPipeline::createB3DM(const std::vec
     return {filename, contentBox};
 }
 
-void FBXPipeline::writeTilesetJson(const std::string& basePath, const osg::BoundingBox& globalBounds, const nlohmann::json& rootContent) {
-    json tileset;
-    tileset["asset"] = {
-        {"version", "1.0"},
-        {"gltfUpAxis", "Z"} // OSG/FBX usually Z-up or we converted
-    };
+void FBXPipeline::writeTilesetJson(const std::string& basePath, const osg::BoundingBox& globalBounds, const tileset::Tile& rootTile) {
+    // 构建Tileset
+    tileset::Tileset tileset(rootTile);
+    tileset.setVersion("1.0");
+    tileset.setGltfUpAxis("Z");
+    tileset.updateGeometricError();  // 从root计算
 
-    // Use geometric error from root content if available, otherwise fallback to global bounds
-    double geometricError = 0.0;
-    if (rootContent.contains("geometricError")) {
-        geometricError = rootContent["geometricError"];
-    } else {
-        double dx = globalBounds.xMax() - globalBounds.xMin();
-        double dy = globalBounds.yMax() - globalBounds.yMin();
-        double dz = globalBounds.zMax() - globalBounds.zMin();
-        double diag = std::sqrt(dx*dx + dy*dy + dz*dz);
-        geometricError = std::max(1e-3, settings.geScale * diag);
-    }
-    tileset["geometricError"] = geometricError;
-    LOG_I("Tileset top-level geometricError=%.3f", geometricError);
-
-    // Root
-    tileset["root"] = rootContent;
-
-    // Force geometric error for root node if it's 0.0 (which happens if it's a leaf)
-    // A root node with 0.0 geometric error might cause visibility issues in some viewers
-    // if the screen space error calculation behaves unexpectedly.
-    // We set it to the calculated diagonal size to ensure it passes the SSE check initially.
-    if (tileset["root"]["geometricError"] == 0.0) {
-         double diag = 0.0;
-         if (rootContent["boundingVolume"].contains("box")) {
-            auto& box = rootContent["boundingVolume"]["box"];
-             if (box.is_array() && box.size() == 12) {
-                // box is center(3) + x_axis(3) + y_axis(3) + z_axis(3)
-                // Half axes vectors (assuming AABB structure as generated in processNode)
-                double hx = box[3]; // box[3], box[4], box[5]
-                double hy = box[7]; // box[6], box[7], box[8]
-                double hz = box[11]; // box[9], box[10], box[11]
-
-                // If it's not strictly AABB (rotated), we should compute length of vectors
-                // But our processNode generates diagonal matrices for axes.
-                double xlen = std::sqrt(double(box[3])*double(box[3]) + double(box[4])*double(box[4]) + double(box[5])*double(box[5]));
-                double ylen = std::sqrt(double(box[6])*double(box[6]) + double(box[7])*double(box[7]) + double(box[8])*double(box[8]));
-                double zlen = std::sqrt(double(box[9])*double(box[9]) + double(box[10])*double(box[10]) + double(box[11])*double(box[11]));
-
-                // Diagonal of the box (2 * half_diagonal)
-                diag = 2.0 * std::sqrt(xlen*xlen + ylen*ylen + zlen*zlen);
-                LOG_I("Root boundingVolume lengths x=%.3f y=%.3f z=%.3f diag=%.3f", xlen, ylen, zlen, diag);
-             }
-         }
-
-         if (diag > 0.0) {
-            tileset["root"]["geometricError"] = diag;
-            tileset["geometricError"] = tileset["root"]["geometricError"];
-            LOG_I("Forcing root geometric error to %f (calculated from root box)", diag);
-            LOG_I("Tileset geometricError updated to root=%.3f", double(tileset["root"]["geometricError"]));
-         } else {
-             // Fallback to globalBounds if box missing (unlikely)
-             // globalBounds is Y-up from FBX, but size is same
-             double dx = globalBounds.xMax() - globalBounds.xMin();
-             double dy = globalBounds.yMax() - globalBounds.yMin();
-             double dz = globalBounds.zMax() - globalBounds.zMin();
-             double fallbackDiag = std::sqrt(dx*dx + dy*dy + dz*dz);
-             tileset["root"]["geometricError"] = fallbackDiag;
-             tileset["geometricError"] = tileset["root"]["geometricError"];
-             LOG_I("Forcing root geometric error to %f (calculated from global bounds)", fallbackDiag);
-             LOG_I("Tileset geometricError updated to fallback=%.3f", double(tileset["root"]["geometricError"]));
-         }
-    }
-
-    // Always add Transform to anchor local ENU coordinates to ECEF
+    // 处理Transform
     if (settings.longitude != 0.0 || settings.latitude != 0.0 || settings.height != 0.0) {
-        glm::dmat4 enuToEcef = coords::CoordinateTransformer::CalcEnuToEcefMatrix(settings.longitude, settings.latitude, settings.height);
+        // 计算ENU到ECEF变换矩阵
+        tileset::TransformMatrix enuToEcef = tileset::calcEnuToEcefMatrix(
+            settings.longitude, settings.latitude, settings.height);
 
-        // Calculate center of the model (in original local coordinates - Y-up from FBX)
+        // 计算模型中心点（Y-up坐标）
         double cx = (globalBounds.xMin() + globalBounds.xMax()) * 0.5;
         double cy = (globalBounds.yMin() + globalBounds.yMax()) * 0.5;
         double cz = (globalBounds.zMin() + globalBounds.zMax()) * 0.5;
 
-        // The geometry is in Z-up coordinates (x, -z, y) in B3DM.
-        // Model center in Z-up: (cx, -cz, cy)
-        //
-        // ENU_to_ECEF maps ENU origin (0,0,0) to target lon/lat/height.
-        // To place model center at target position, we need ENU origin to be at model center.
-        //
-        // In ENU coordinates (Z-up), model center is at (cx, -cz, cy).
-        // So we need to shift ENU origin by (cx, -cz, cy) in the ENU frame.
-        //
-        // This is equivalent to: transform = ENU_to_ECEF * translate(cx, -cz, cy)
-        // Which shifts the ENU origin so that model center maps to target position.
-
-        // Apply translation to ENU origin (in ENU frame, then rotated to ECEF)
-        // glm is column-major
-        // Translation in ENU frame: (cx, -cz, cy)
-        // After ENU_to_ECEF rotation, this becomes a translation in ECEF
+        // 转换到Z-up坐标
         double tx = cx;
-        double ty = -cz;  // Z-up: y is north, FBX z becomes -y in Z-up
-        double tz = cy;   // FBX y becomes z in Z-up
+        double ty = -cz;
+        double tz = cy;
 
-        // Add translation to the transform (ENU_to_ECEF * translation)
-        enuToEcef[3][0] += tx * enuToEcef[0][0] + ty * enuToEcef[1][0] + tz * enuToEcef[2][0];
-        enuToEcef[3][1] += tx * enuToEcef[0][1] + ty * enuToEcef[1][1] + tz * enuToEcef[2][1];
-        enuToEcef[3][2] += tx * enuToEcef[0][2] + ty * enuToEcef[1][2] + tz * enuToEcef[2][2];
+        // 应用ENU平移
+        enuToEcef = tileset::applyEnuTranslation(enuToEcef, tx, ty, tz);
+
+        // 设置transform
+        tileset.root.setTransform(enuToEcef);
 
         LOG_I("Model center Y-up: (%.2f, %.2f, %.2f), Z-up: (%.2f, %.2f, %.2f)", cx, cy, cz, tx, ty, tz);
-
-        const double* m = (const double*)&enuToEcef;
-        tileset["root"]["transform"] = {
-            m[0], m[1], m[2], m[3],
-            m[4], m[5], m[6], m[7],
-            m[8], m[9], m[10], m[11],
-            m[12], m[13], m[14], m[15]
-        };
-        LOG_I("Applied root transform ENU->ECEF at lon=%.6f lat=%.6f h=%.3f", settings.longitude, settings.latitude, settings.height);
+        LOG_I("Applied root transform ENU->ECEF at lon=%.6f lat=%.6f h=%.3f",
+              settings.longitude, settings.latitude, settings.height);
     } else {
         LOG_W("No geolocation provided; root.transform not set. Tiles remain in local ENU space.");
     }
 
-    std::string s = tileset.dump(4);
-    std::ofstream out(fs::path(basePath) / "tileset.json");
-    out << s;
-    out.close();
-}
-
-void FBXPipeline::logLevelStats() {
-    std::vector<int> levels;
-    levels.reserve(levelStats.size());
-    for (const auto& kv : levelStats) levels.push_back(kv.first);
-    std::sort(levels.begin(), levels.end());
-    LOG_I("LevelStats summary begin");
-    for (int d : levels) {
-        const auto& acc = levelStats[d];
-        double avgDiag = acc.count ? acc.sumDiag / acc.count : 0.0;
-        double avgGe = acc.count ? acc.sumGe / acc.count : 0.0;
-        double tightPct = acc.count ? (double)acc.tightCount * 100.0 / (double)acc.count : 0.0;
-        double fallbackPct = acc.count ? (double)acc.fallbackCount * 100.0 / (double)acc.count : 0.0;
-        double addPct = acc.count ? (double)acc.refineAdd * 100.0 / (double)acc.count : 0.0;
-        double replacePct = acc.count ? (double)acc.refineReplace * 100.0 / (double)acc.count : 0.0;
-        LOG_I("LevelStats depth=%d tiles=%zu avgDiag=%.3f avgGe=%.3f inflate=1.25 tight=%.1f%% fallback=%.1f%% refineAdd=%.1f%% refineReplace=%.1f%%", d, acc.count, avgDiag, avgGe, tightPct, fallbackPct, addPct, replacePct);
+    // 使用TilesetWriter输出
+    tileset::TilesetWriter writer;
+    std::string filepath = (fs::path(basePath) / "tileset.json").string();
+    if (!writer.writeToFile(tileset, filepath)) {
+        LOG_E("Failed to write tileset.json to %s", filepath.c_str());
     }
-    LOG_I("LevelStats summary end");
-}
-
-nlohmann::json FBXPipeline::buildAverageTiles(const osg::BoundingBox& globalBounds, const std::string& parentPath) {
-    nlohmann::json rootJson;
-    rootJson["children"] = nlohmann::json::array();
-    rootJson["refine"] = "REPLACE";
-
-    // Gather all instances
-    std::vector<InstanceRef> all;
-    for (auto& pair : loader->meshPool) {
-        MeshInstanceInfo& info = pair.second;
-        if (!info.geometry) continue;
-        for (size_t i = 0; i < info.transforms.size(); ++i) {
-            InstanceRef ref;
-            ref.meshInfo = &info;
-            ref.transformIndex = (int)i;
-            all.push_back(ref);
-        }
-    }
-
-    // Split by average count and generate children; simultaneously accumulate ENU global bounds
-    osg::BoundingBox enuGlobal;
-    size_t total = all.size();
-    size_t step = std::max<size_t>(1, (size_t)settings.maxItemsPerTile);
-    size_t tiles = (total + step - 1) / step;
-    for (size_t t = 0; t < tiles; ++t) {
-        size_t start = t * step;
-        size_t end = std::min(total, start + step);
-        if (start >= end) break;
-        std::vector<InstanceRef> chunk(all.begin() + start, all.begin() + end);
-        std::string tileName = "tile_" + std::to_string(t);
-        SimplificationParams simParams;
-        auto b3dm = createB3DM(chunk, parentPath, tileName, simParams);
-        if (b3dm.first.empty()) {
-            LOG_I("AvgSplit tile=%s produced no content, skipped", tileName.c_str());
-            continue;
-        }
-        osg::BoundingBox cb = b3dm.second; // Already ENU due to appendGeometryToModel
-        enuGlobal.expandBy(cb);
-
-        double cx = cb.center().x();
-        double cy = cb.center().y();
-        double cz = cb.center().z();
-        double hx = std::max((cb.xMax() - cb.xMin()) / 2.0, 1e-6);
-        double hy = std::max((cb.yMax() - cb.yMin()) / 2.0, 1e-6);
-        double hz = std::max((cb.zMax() - cb.zMin()) / 2.0, 1e-6);
-
-        // Collect Tile Stats
-        double dimX = hx * 2.0;
-        double dimY = hy * 2.0;
-        double dimZ = hz * 2.0;
-        double vol = dimX * dimY * dimZ;
-
-        tileStats.push_back({
-            tileName, 1, vol, dimX, dimY, dimZ,
-            osg::Vec3d(cx, cy, cz),
-            osg::Vec3d(cb.xMin(), cb.yMin(), cb.zMin()),
-            osg::Vec3d(cb.xMax(), cb.yMax(), cb.zMax())
-        });
-
-        double diag = 2.0 * std::sqrt(hx*hx + hy*hy + hz*hz);
-        double geOut = std::max(1e-3, settings.geScale * diag);
-
-        nlohmann::json child;
-        child["boundingVolume"]["box"] = { cx, cy, cz, hx, 0, 0, 0, hy, 0, 0, 0, hz };
-        child["geometricError"] = geOut;
-        child["refine"] = "REPLACE";
-        child["content"]["uri"] = b3dm.first;
-        rootJson["children"].push_back(child);
-
-        auto& acc = levelStats[1];
-        acc.count += 1;
-        acc.sumDiag += diag;
-        acc.sumGe += geOut;
-        acc.tightCount += 1;
-        acc.refineReplace += 1;
-        LOG_I("AvgSplit tile=%s count=%zu diag=%.3f ge=%.3f", tileName.c_str(), chunk.size(), diag, geOut);
-
-        // Log contained nodes
-        for (const auto& ref : chunk) {
-            std::string nName = (ref.transformIndex < ref.meshInfo->nodeNames.size()) ? ref.meshInfo->nodeNames[ref.transformIndex] : "unknown";
-            LOG_I("Tile: %s contains Node: %s", tileName.c_str(), nName.c_str());
-        }
-    }
-
-    // Compute root bounding volume from union of children (ENU space, consistent with root.transform)
-    if (enuGlobal.valid()) {
-        double gcx = enuGlobal.center().x();
-        double gcy = enuGlobal.center().y();
-        double gcz = enuGlobal.center().z();
-        double halfX = std::max((enuGlobal.xMax() - enuGlobal.xMin()) / 2.0 * 1.25, 1e-6);
-        double halfY = std::max((enuGlobal.yMax() - enuGlobal.yMin()) / 2.0 * 1.25, 1e-6);
-        double halfZ = std::max((enuGlobal.zMax() - enuGlobal.zMin()) / 2.0 * 1.25, 1e-6);
-        double gdiag = 2.0 * std::sqrt(halfX*halfX + halfY*halfY + halfZ*halfZ);
-        double gge = std::max(1e-3, settings.geScale * gdiag);
-        rootJson["boundingVolume"]["box"] = { gcx, gcy, gcz, halfX, 0, 0, 0, halfY, 0, 0, 0, halfZ };
-        rootJson["geometricError"] = gge;
-        auto& acc = levelStats[0];
-        acc.count += 1;
-        acc.sumDiag += gdiag;
-        acc.sumGe += gge;
-        acc.tightCount += 1;
-        acc.refineReplace += 1;
-        LOG_I("AvgSplit root diag=%.3f ge=%.3f center=(%.3f,%.3f,%.3f) halfAxes=(%.3f,%.3f,%.3f)", gdiag, gge, gcx, gcy, gcz, halfX, halfY, halfZ);
-    } else {
-        // Fallback to transformed original global bounds if no children created
-        double halfX = std::max((globalBounds.xMax() - globalBounds.xMin()) / 2.0 * 1.25, 1e-6);
-        double halfY = std::max((globalBounds.yMax() - globalBounds.yMin()) / 2.0 * 1.25, 1e-6);
-        double halfZ = std::max((globalBounds.zMax() - globalBounds.zMin()) / 2.0 * 1.25, 1e-6);
-        double gdiag = 2.0 * std::sqrt(halfX*halfX + halfY*halfY + halfZ*halfZ);
-        double gge = settings.geScale * gdiag;
-        double gcx = globalBounds.center().x();
-        double gcy = -globalBounds.center().z();
-        double gcz = globalBounds.center().y();
-        rootJson["boundingVolume"]["box"] = { gcx, gcy, gcz, halfX, 0, 0, 0, halfZ, 0, 0, 0, halfY };
-        rootJson["geometricError"] = gge;
-        auto& acc = levelStats[0];
-        acc.count += 1;
-        acc.sumDiag += gdiag;
-        acc.sumGe += gge;
-        acc.fallbackCount += 1;
-        acc.refineReplace += 1;
-        LOG_I("AvgSplit root (fallback) diag=%.3f ge=%.3f center=(%.3f,%.3f,%.3f) halfAxes=(%.3f,%.3f,%.3f)", gdiag, gge, gcx, gcy, gcz, halfX, halfZ, halfY);
-    }
-
-    return rootJson;
 }
 
 // C-API Implementation
