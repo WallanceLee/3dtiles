@@ -36,20 +36,21 @@ export function useViewer3D() {
     viewer.value.scene.logarithmicDepthBuffer = true;
     viewer.value.camera.frustum.near = 0.1;
 
-    if (config.terrain !== false) {
-      try {
-        const terrainProvider = await Cesium.createWorldTerrainAsync({
-          requestVertexNormals: true,
-          requestWaterMask: true
-        });
-        viewer.value.terrainProvider = terrainProvider;
-        console.log('Terrain loaded successfully');
-      } catch (error) {
-        console.warn('Failed to load terrain:', error);
-      }
-    }
+    // if (config.terrain !== false) {
+    //   try {
+    //     const terrainProvider = await Cesium.createWorldTerrainAsync({
+    //       requestVertexNormals: true,
+    //       requestWaterMask: true
+    //     });
+    //     viewer.value.terrainProvider = terrainProvider;
+    //     console.log('Terrain loaded successfully');
+    //   } catch (error) {
+    //     console.warn('Failed to load terrain:', error);
+    //   }
+    // }
 
     viewer.value.scene.globe.depthTestAgainstTerrain = false;
+      viewer.value.shadows = false;
 
     isReady.value = true;
   }
