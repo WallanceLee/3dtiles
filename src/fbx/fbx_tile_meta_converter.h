@@ -30,7 +30,7 @@ public:
         std::string outputPath;           // 输出根目录
         bool enableLOD = false;           // 是否启用LOD
         std::vector<LODLevelSettings> lodLevels; // LOD配置
-        b3dm::B3DMGenerator* generator = nullptr; // B3DM生成器
+        b3dm::B3DMGenerator* generator = nullptr; // B3DM生成器（非拥有指针，由调用方管理生命周期）
     };
 
     /**

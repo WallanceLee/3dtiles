@@ -4,6 +4,7 @@
 #include <array>
 #include <unordered_map>
 #include <queue>
+#include <memory>
 
 namespace spatial::strategy {
 
@@ -48,6 +49,8 @@ struct QuadtreeCoord {
 
 /**
  * @brief 四叉树节点
+ *
+ * 使用 std::unique_ptr 管理子节点，自动内存管理
  */
 class QuadtreeNode : public core::SpatialIndexNode {
 public:
@@ -60,16 +63,17 @@ public:
     void setCoord(const QuadtreeCoord& coord) { coord_ = coord; }
     void addItem(const core::SpatialItemRef& item) { items_.push_back(item); }
     void clearItems() { items_.clear(); }
-    void setParent(QuadtreeNode* parent) { parent_ = parent; }
 
     const core::SpatialBounds<double, 2>& getBounds2D() const { return bounds2d_; }
     const QuadtreeCoord& getCoord() const { return coord_; }
     QuadtreeNode* getParent() const { return parent_; }
-    const std::array<QuadtreeNode*, 4>& getChildrenArray() const { return children_; }
-    QuadtreeNode* getChild(int index) const { return children_[index]; }
+    QuadtreeNode* getChild(int index) const { return children_[index].get(); }
 
-    void setChild(int index, QuadtreeNode* child) {
-        children_[index] = child;
+    void setChild(int index, std::unique_ptr<QuadtreeNode> child) {
+        if (child) {
+            child->parent_ = this;
+        }
+        children_[index] = std::move(child);
     }
 
     core::SpatialBounds<double, 3> getBounds() const override {
@@ -86,14 +90,14 @@ public:
     }
 
     bool isLeaf() const override {
-        return children_[0] == nullptr;
+        return !children_[0];
     }
 
     std::vector<const core::SpatialIndexNode*> getChildren() const override {
         std::vector<const core::SpatialIndexNode*> result;
         for (const auto& child : children_) {
-            if (child != nullptr) {
-                result.push_back(child);
+            if (child) {
+                result.push_back(child.get());
             }
         }
         return result;
@@ -114,28 +118,28 @@ public:
         auto min = bounds2d_.min();
         auto max = bounds2d_.max();
 
-        children_[0] = new QuadtreeNode(
+        auto child0 = std::make_unique<QuadtreeNode>(
             core::SpatialBounds<double, 2>(
                 std::array<double, 2>{min[0], min[1]},
                 std::array<double, 2>{center[0], center[1]}
             ),
             depth_ + 1
         );
-        children_[1] = new QuadtreeNode(
+        auto child1 = std::make_unique<QuadtreeNode>(
             core::SpatialBounds<double, 2>(
                 std::array<double, 2>{center[0], min[1]},
                 std::array<double, 2>{max[0], center[1]}
             ),
             depth_ + 1
         );
-        children_[2] = new QuadtreeNode(
+        auto child2 = std::make_unique<QuadtreeNode>(
             core::SpatialBounds<double, 2>(
                 std::array<double, 2>{min[0], center[1]},
                 std::array<double, 2>{center[0], max[1]}
             ),
             depth_ + 1
         );
-        children_[3] = new QuadtreeNode(
+        auto child3 = std::make_unique<QuadtreeNode>(
             core::SpatialBounds<double, 2>(
                 std::array<double, 2>{center[0], center[1]},
                 std::array<double, 2>{max[0], max[1]}
@@ -143,8 +147,13 @@ public:
             depth_ + 1
         );
 
+        children_[0] = std::move(child0);
+        children_[1] = std::move(child1);
+        children_[2] = std::move(child2);
+        children_[3] = std::move(child3);
+
         for (int i = 0; i < 4; ++i) {
-            children_[i]->setParent(this);
+            children_[i]->parent_ = this;
             QuadtreeCoord childCoord = coord_;
             childCoord.z = depth_ + 1;
             childCoord.x = coord_.x * 2 + (i % 2);
@@ -174,26 +183,21 @@ public:
         }
     }
 
-    void deleteChildren() {
-        for (int i = 0; i < 4; ++i) {
-            if (children_[i]) {
-                children_[i]->deleteChildren();
-                delete children_[i];
-                children_[i] = nullptr;
-            }
+    // 清除所有子节点（unique_ptr 自动释放内存）
+    void clearChildren() {
+        for (auto& child : children_) {
+            child.reset();
         }
     }
 
-    ~QuadtreeNode() {
-        deleteChildren();
-    }
+    ~QuadtreeNode() = default;
 
 private:
     core::SpatialBounds<double, 2> bounds2d_;
     int depth_ = 0;
     QuadtreeCoord coord_;
     QuadtreeNode* parent_ = nullptr;
-    std::array<QuadtreeNode*, 4> children_{nullptr, nullptr, nullptr, nullptr};
+    std::array<std::unique_ptr<QuadtreeNode>, 4> children_;
     core::SpatialItemRefList items_;
 };
 
@@ -202,11 +206,11 @@ private:
  */
 class QuadtreeIndex : public core::SpatialIndex {
 public:
-    QuadtreeIndex(QuadtreeNode* root, const core::SpatialBounds<double, 2>& worldBounds)
-        : root_(root), worldBounds_(worldBounds) {}
+    QuadtreeIndex(std::unique_ptr<QuadtreeNode> root, const core::SpatialBounds<double, 2>& worldBounds)
+        : root_(std::move(root)), worldBounds_(worldBounds) {}
 
     const core::SpatialIndexNode* getRootNode() const override {
-        return root_;
+        return root_.get();
     }
 
     core::SpatialItemRefList getAllItems() const override {
@@ -226,7 +230,7 @@ public:
             std::array<double, 2>{bounds.max()[0], bounds.max()[1]}
         );
 
-        queryRecursive(root_, bounds2d, result);
+        queryRecursive(root_.get(), bounds2d, result);
         return result;
     }
 
@@ -234,17 +238,12 @@ public:
     size_t getItemCount() const override { return getAllItems().size(); }
 
     void setNodeCount(size_t count) { nodeCount_ = count; }
-    QuadtreeNode* getRoot() const { return root_; }
+    QuadtreeNode* getRoot() const { return root_.get(); }
 
     // 存储原始 SpatialItemPtr 以保持对象生命周期
     void setItemStorage(core::SpatialItemList&& items) { itemStorage_ = std::move(items); }
 
-    ~QuadtreeIndex() {
-        if (root_) {
-            root_->deleteChildren();
-            delete root_;
-        }
-    }
+    ~QuadtreeIndex() = default;
 
 private:
     void queryRecursive(QuadtreeNode* node,
@@ -263,7 +262,7 @@ private:
         }
     }
 
-    QuadtreeNode* root_ = nullptr;
+    std::unique_ptr<QuadtreeNode> root_;
     core::SpatialBounds<double, 2> worldBounds_;
     size_t nodeCount_ = 0;
     core::SpatialItemList itemStorage_;  // 存储原始 SpatialItemPtr 以保持对象生命周期
@@ -307,7 +306,7 @@ public:
         size_t nodeCount = 0;
         countNodes(root.get(), nodeCount);
 
-        auto index = std::make_unique<QuadtreeIndex>(root.release(), worldBounds2d);
+        auto index = std::make_unique<QuadtreeIndex>(std::move(root), worldBounds2d);
         index->setNodeCount(nodeCount);
         // 存储原始 items 以保持对象生命周期
         index->setItemStorage(const_cast<core::SpatialItemList&&>(items));

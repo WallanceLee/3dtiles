@@ -55,20 +55,16 @@ bool isPointInBox(const osg::Vec3d& p, const osg::BoundingBox& b) {
 FBXPipeline::FBXPipeline(const PipelineSettings& s) : settings(s) {
 }
 
-FBXPipeline::~FBXPipeline() {
-    if (loader) delete loader;
-}
-
 void FBXPipeline::run() {
     LOG_I("Starting FBXPipeline (Stage 1)...");
 
-    loader = new FBXLoader(settings.inputPath);
-    loader->load();
-    LOG_I("FBX Loaded. Mesh Pool Size: %zu", loader->meshPool.size());
+    loader_ = std::make_unique<FBXLoader>(settings.inputPath);
+    loader_->load();
+    LOG_I("FBX Loaded. Mesh Pool Size: %zu", loader_->meshPool.size());
 
     // 阶段1：创建空间对象适配器
     LOG_I("Creating Spatial Items...");
-    spatialItems_ = fbx::createSpatialItems(loader);
+    spatialItems_ = fbx::createSpatialItems(loader_.get());
     LOG_I("Created %zu spatial items.", spatialItems_.size());
 
     // Lambda to generate LOD settings chain
@@ -104,7 +100,7 @@ void FBXPipeline::run() {
         simParams.target_ratio = 0.5f; // Default ratio
         simParams.target_error = 0.0001f; // Base error
 
-        for (auto& pair : loader->meshPool) {
+        for (auto& pair : loader_->meshPool) {
             if (pair.second.geometry) {
                 simplify_mesh_geometry(pair.second.geometry.get(), simParams);
             }

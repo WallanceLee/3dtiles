@@ -3,6 +3,7 @@
 #include "../core/slicing_strategy.h"
 #include <array>
 #include <vector>
+#include <memory>
 
 namespace spatial::strategy {
 
@@ -16,6 +17,8 @@ struct OctreeConfig : public core::SlicingConfig {
 
 /**
  * @brief 八叉树节点
+ * 
+ * 使用 std::unique_ptr 管理子节点，自动内存管理
  */
 class OctreeNode : public core::SpatialIndexNode {
 public:
@@ -26,14 +29,16 @@ public:
     void setBounds(const core::SpatialBounds<double, 3>& bounds) { bounds_ = bounds; }
     void setDepth(int depth) { depth_ = depth; }
     void addItem(const core::SpatialItemRef& item) { items_.push_back(item); }
-    void setParent(OctreeNode* parent) { parent_ = parent; }
 
     const core::SpatialBounds<double, 3>& getBounds3D() const { return bounds_; }
     OctreeNode* getParent() const { return parent_; }
-    OctreeNode* getChild(int index) const { return children_[index]; }
+    OctreeNode* getChild(int index) const { return children_[index].get(); }
 
-    void setChild(int index, OctreeNode* child) {
-        children_[index] = child;
+    void setChild(int index, std::unique_ptr<OctreeNode> child) {
+        if (child) {
+            child->parent_ = this;
+        }
+        children_[index] = std::move(child);
     }
 
     core::SpatialBounds<double, 3> getBounds() const override {
@@ -47,14 +52,14 @@ public:
     }
 
     bool isLeaf() const override {
-        return children_[0] == nullptr;
+        return !children_[0];
     }
 
     std::vector<const core::SpatialIndexNode*> getChildren() const override {
         std::vector<const core::SpatialIndexNode*> result;
         for (const auto& child : children_) {
-            if (child != nullptr) {
-                result.push_back(child);
+            if (child) {
+                result.push_back(child.get());
             }
         }
         return result;
@@ -94,11 +99,12 @@ public:
                 zHigh ? max[2] : center[2]
             };
 
-            children_[i] = new OctreeNode(
+            auto child = std::make_unique<OctreeNode>(
                 core::SpatialBounds<double, 3>(childMin, childMax),
                 depth_ + 1
             );
-            children_[i]->setParent(this);
+            child->parent_ = this;
+            children_[i] = std::move(child);
         }
     }
 
@@ -111,26 +117,20 @@ public:
         }
     }
 
-    void deleteChildren() {
-        for (int i = 0; i < 8; ++i) {
-            if (children_[i]) {
-                children_[i]->deleteChildren();
-                delete children_[i];
-                children_[i] = nullptr;
-            }
+    // 清除所有子节点（unique_ptr 自动释放内存）
+    void clearChildren() {
+        for (auto& child : children_) {
+            child.reset();
         }
     }
 
-    ~OctreeNode() {
-        deleteChildren();
-    }
+    ~OctreeNode() = default;
 
 private:
     core::SpatialBounds<double, 3> bounds_;
     int depth_ = 0;
     OctreeNode* parent_ = nullptr;
-    std::array<OctreeNode*, 8> children_{nullptr, nullptr, nullptr, nullptr, 
-                                         nullptr, nullptr, nullptr, nullptr};
+    std::array<std::unique_ptr<OctreeNode>, 8> children_;
     core::SpatialItemRefList items_;
 };
 
@@ -139,11 +139,11 @@ private:
  */
 class OctreeIndex : public core::SpatialIndex {
 public:
-    OctreeIndex(OctreeNode* root, const core::SpatialBounds<double, 3>& worldBounds)
-        : root_(root), worldBounds_(worldBounds) {}
+    OctreeIndex(std::unique_ptr<OctreeNode> root, const core::SpatialBounds<double, 3>& worldBounds)
+        : root_(std::move(root)), worldBounds_(worldBounds) {}
 
     const core::SpatialIndexNode* getRootNode() const override {
-        return root_;
+        return root_.get();
     }
 
     core::SpatialItemRefList getAllItems() const override {
@@ -158,7 +158,7 @@ public:
         core::SpatialItemRefList result;
         if (!root_) return result;
 
-        queryRecursive(root_, bounds, result);
+        queryRecursive(root_.get(), bounds, result);
         return result;
     }
 
@@ -166,14 +166,9 @@ public:
     size_t getItemCount() const override { return getAllItems().size(); }
 
     void setNodeCount(size_t count) { nodeCount_ = count; }
-    OctreeNode* getRoot() const { return root_; }
+    OctreeNode* getRoot() const { return root_.get(); }
 
-    ~OctreeIndex() {
-        if (root_) {
-            root_->deleteChildren();
-            delete root_;
-        }
-    }
+    ~OctreeIndex() = default;
 
 private:
     void queryRecursive(OctreeNode* node, 
@@ -192,7 +187,7 @@ private:
         }
     }
 
-    OctreeNode* root_ = nullptr;
+    std::unique_ptr<OctreeNode> root_;
     core::SpatialBounds<double, 3> worldBounds_;
     size_t nodeCount_ = 0;
 };
@@ -225,7 +220,7 @@ public:
         size_t nodeCount = 0;
         countNodes(root.get(), nodeCount);
 
-        auto index = std::make_unique<OctreeIndex>(root.release(), worldBounds);
+        auto index = std::make_unique<OctreeIndex>(std::move(root), worldBounds);
         index->setNodeCount(nodeCount);
         return index;
     }
@@ -261,10 +256,7 @@ private:
 
     void redistributeItems(OctreeNode* node, const OctreeConfig& config) {
         auto items = node->getItems();
-        node->deleteChildren();
-        for (int i = 0; i < 8; ++i) {
-            node->setChild(i, nullptr);
-        }
+        node->clearChildren();
         node->split();
 
         for (const auto& itemRef : items) {

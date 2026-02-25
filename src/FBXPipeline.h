@@ -7,6 +7,7 @@
 #include "b3dm/b3dm_generator.h"
 #include <string>
 #include <vector>
+#include <memory>
 #include <osg/Matrixd>
 #include <osg/BoundingBox>
 #include <osg/Geometry>
@@ -41,14 +42,14 @@ struct PipelineSettings {
 
 class FBXPipeline {
 public:
-    FBXPipeline(const PipelineSettings& settings);
-    ~FBXPipeline();
+    explicit FBXPipeline(const PipelineSettings& settings);
+    ~FBXPipeline() = default;
 
     void run();
 
 private:
     PipelineSettings settings;
-    FBXLoader* loader = nullptr;
+    std::unique_ptr<FBXLoader> loader_;
 
     // 阶段1：空间对象适配器列表
     fbx::FBXSpatialItemList spatialItems_;
