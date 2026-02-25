@@ -1,7 +1,6 @@
 #include "FBXPipeline.h"
 #include "extern.h"
-#include "coordinate_transformer.h"
-#include "b3dm/b3dm_writer.h"
+#include "./coords/coordinate_transformer.h"
 #include <osg/MatrixTransform>
 #include <osg/Geode>
 #include <osg/Material>
@@ -9,36 +8,26 @@
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
-#include <map>
-#include <set>
 
 // Use existing tinygltf if possible, or include it
 #include <osgDB/ReaderWriter>
 #include <osgDB/Registry>
 #include <tiny_gltf.h>
 #include <nlohmann/json.hpp>
-#include "mesh_processor.h"
+#include "common/mesh_processor.h"
 #include <osg/Texture>
 #include <osg/Image>
 #include "lod_pipeline.h"
-#include <typeinfo>
 #include <osg/GL>
 #include <cmath>
-#include "gltf/extensions/texture_transform.h"
-#include "gltf/extensions/specular_glossiness.h"
-#include "osg/utils/geometry_utils.h"
-#include "osg/utils/texture_utils.h"
-#include "osg/utils/material_utils.h"
 
 // Stage 2: New architecture integration
 #include "spatial/strategy/octree_strategy.h"
-#include "fbx/fbx_octree_adapter.h"
 
 // Stage 3: B3DMGenerator integration
 #include "fbx/fbx_geometry_extractor.h"
 
 // Stage 4: TilesetBuilder integration
-#include "fbx/fbx_tile_meta_converter.h"
 #include "fbx/fbx_tileset_adapter.h"
 
 using json = nlohmann::json;

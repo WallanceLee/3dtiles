@@ -3,7 +3,7 @@
 
 #include <vector>
 #include <cstddef>
-#include "mesh_processor.h"
+#include "common/mesh_processor.h"
 
 // Settings for a single LOD output (one b3dm per level)
 struct LODLevelSettings {

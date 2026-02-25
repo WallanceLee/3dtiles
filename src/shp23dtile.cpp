@@ -2,21 +2,10 @@
 #include <nlohmann/json.hpp>
 #include "extern.h"
 
-#include "mesh_processor.h"
+#include "common/mesh_processor.h"
 #include "attribute_storage.h"
-#include "coordinate_transformer.h"
-#include "lod_pipeline.h"
+#include "coords/coordinate_transformer.h"
 #include "shape.h"
-
-// Tileset 模块
-#include "tileset/tileset_types.h"
-#include "tileset/tileset_writer.h"
-#include "tileset/bounding_volume.h"
-#include "tileset/geometric_error.h"
-
-// Shapefile 业务层
-#include "shapefile/shapefile_tile.h"
-#include "shapefile/shapefile_tileset_adapter.h"
 
 // 阶段4迁移：完整新框架
 #include "shapefile/shapefile_processor.h"
@@ -24,8 +13,6 @@
 /* vcpkg path */
 #include <ogrsf_frmts.h>
 
-#include <optional>
-#include <fstream>
 #include <osg/Material>
 #include <osg/PagedLOD>
 #include <osgDB/ReadFile>
@@ -41,17 +28,7 @@
 #include <osgUtil/SmoothingVisitor>
 
 #include <string>
-#include <vector>
-#include <array>
 #include <filesystem>
-#include <cstdint>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <limits>
-#include <algorithm>
-#include <cmath>
-#include <numeric>
 
 using namespace std;
 

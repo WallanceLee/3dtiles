@@ -15,7 +15,7 @@
 #include "../spatial/strategy/quadtree_strategy.h"
 #include "../spatial/core/slicing_strategy.h"
 #include "shapefile_tile.h"
-#include "../mesh_processor.h"
+#include "../common/mesh_processor.h"
 
 #include <string>
 #include <vector>

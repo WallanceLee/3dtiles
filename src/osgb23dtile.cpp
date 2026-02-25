@@ -21,7 +21,7 @@
 #include <basisu/transcoder/basisu_transcoder.h>
 
 // Add Draco compression includes
-#include "mesh_processor.h"
+#include "common/mesh_processor.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -29,7 +29,7 @@
 #include <tiny_gltf.h>
 #include <nlohmann/json.hpp>
 #include "extern.h"
-#include "coordinate_transformer.h"
+#include "./coords/coordinate_transformer.h"
 #include "b3dm/b3dm_writer.h"
 #include "tileset/bounding_volume.h"
 #include "tileset/tileset_writer.h"

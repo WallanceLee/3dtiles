@@ -1,6 +1,6 @@
 #include "texture_utils.h"
 #include "../../extern.h"
-#include "../../mesh_processor.h"
+#include "../../common/mesh_processor.h"
 
 #include <osgDB/Registry>
 #include <osgDB/ReaderWriter>

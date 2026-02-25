@@ -13,7 +13,7 @@
 #include "../common/tileset_builder.h"
 #include "../tileset/tileset_types.h"
 #include "../tileset/bounding_volume.h"
-#include "../coordinate_transformer.h"
+#include "../coords/coordinate_transformer.h"
 #include <glm/glm.hpp>
 #include <unordered_map>
 #include <vector>

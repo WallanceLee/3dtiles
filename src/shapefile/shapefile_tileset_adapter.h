@@ -20,7 +20,7 @@
 #include "../tileset/tileset_types.h"
 #include "../tileset/bounding_volume.h"
 #include "../tileset/transform.h"
-#include "../coordinate_transformer.h"
+#include "../coords/coordinate_transformer.h"
 
 #include <extern.h>  // for degree2rad, longti_to_meter, lati_to_meter
 

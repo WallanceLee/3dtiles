@@ -14,7 +14,7 @@
 #include "primitive_builder.h"
 #include "material_builder.h"
 #include "extension_manager.h"
-#include "../mesh_processor.h"
+#include "../common/mesh_processor.h"
 #include <osg/Geometry>
 #include <osg/Matrix>
 #include <tiny_gltf.h>

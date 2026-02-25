@@ -1,5 +1,5 @@
 #include "geometry_converter.h"
-#include "../coordinate_transformer.h"
+#include "../coords/coordinate_transformer.h"
 #include "../extern.h"
 
 #include <osg/Array>

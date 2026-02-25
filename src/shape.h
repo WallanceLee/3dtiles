@@ -1,7 +1,7 @@
 #pragma once
 
 #include "lod_pipeline.h"
-#include "mesh_processor.h"
+#include "common/mesh_processor.h"
 #include <cstddef>
 
 struct ShapeConversionParams {

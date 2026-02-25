@@ -16,7 +16,7 @@
 
 #include "../common/geometry_extractor.h"
 #include "b3dm_writer.h"
-#include "../mesh_processor.h"
+#include "../common/mesh_processor.h"
 #include "../lod_pipeline.h"
 #include <osg/Geometry>
 #include <vector>

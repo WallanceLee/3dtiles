@@ -10,7 +10,7 @@
 #include <ogrsf_frmts.h>
 
 #include "extern.h"
-#include "coordinate_transformer.h"
+#include "coords/coordinate_transformer.h"
 #include <glm/gtc/type_ptr.hpp>
 
 ///////////////////////
