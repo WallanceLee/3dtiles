@@ -393,9 +393,6 @@ fn convert_fbx_cmd(
 
     info!("Starting FBX conversion: {} -> {}", input, output);
     info!("Origin: lon={}, lat={}, height={}", longitude, latitude, height_f);
-    if enable_lod {
-        warn!("LOD is not supported for FBX; flag will be ignored");
-    }
 
     if let Err(e) = fbx::convert_fbx(
         input,
@@ -408,6 +405,7 @@ fn convert_fbx_cmd(
         longitude,
         latitude,
         height_f,
+        enable_lod,
     ) {
         error!("FBX conversion failed: {}", e);
     } else {

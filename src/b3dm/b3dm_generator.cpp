@@ -10,7 +10,6 @@
 
 #include <sstream>
 #include <fstream>
-#include <algorithm>
 #include <set>
 
 namespace b3dm {
@@ -58,6 +57,7 @@ osg::ref_ptr<osg::Geometry> B3DMGenerator::extractAndMergeGeometries(
     }
 
     if (allGeoms.empty()) {
+        LOG_W("No geometries extracted from items");
         return nullptr;
     }
 
@@ -69,27 +69,47 @@ osg::ref_ptr<osg::Geometry> B3DMGenerator::extractAndMergeGeometries(
     osg::ref_ptr<osg::DrawElementsUInt> mergedIndices = new osg::DrawElementsUInt(osg::PrimitiveSet::TRIANGLES);
 
     for (size_t i = 0; i < allGeoms.size(); ++i) {
-        if (!allGeoms[i].valid()) continue;
+        if (!allGeoms[i].valid()) {
+            continue;
+        }
 
+        // 尝试获取顶点数组 (支持 Vec3Array 和 Vec3dArray)
         osg::Vec3Array* vArr = dynamic_cast<osg::Vec3Array*>(allGeoms[i]->getVertexArray());
-        if (!vArr || vArr->empty()) continue;
+        osg::Vec3dArray* vArrd = dynamic_cast<osg::Vec3dArray*>(allGeoms[i]->getVertexArray());
+
+        size_t vertexCount = 0;
+        if (vArr && !vArr->empty()) {
+            vertexCount = vArr->size();
+        } else if (vArrd && !vArrd->empty()) {
+            vertexCount = vArrd->size();
+        } else {
+            continue;
+        }
 
         osg::Vec3Array* nArr = dynamic_cast<osg::Vec3Array*>(allGeoms[i]->getNormalArray());
         osg::Vec2Array* tArr = dynamic_cast<osg::Vec2Array*>(allGeoms[i]->getTexCoordArray(0));
 
         const size_t base = mergedVertices->size();
-        mergedVertices->insert(mergedVertices->end(), vArr->begin(), vArr->end());
 
-        if (nArr && nArr->size() == vArr->size()) {
-            mergedNormals->insert(mergedNormals->end(), nArr->begin(), nArr->end());
-        } else {
-            mergedNormals->insert(mergedNormals->end(), vArr->size(), osg::Vec3(0.0f, 0.0f, 1.0f));
+        // 添加顶点 (转换 Vec3dArray 到 Vec3Array)
+        if (vArr) {
+            mergedVertices->insert(mergedVertices->end(), vArr->begin(), vArr->end());
+        } else if (vArrd) {
+            for (const auto& v : *vArrd) {
+                mergedVertices->push_back(osg::Vec3(v.x(), v.y(), v.z()));
+            }
         }
 
-        if (tArr && tArr->size() == vArr->size()) {
+        if (nArr && nArr->size() == vertexCount) {
+            mergedNormals->insert(mergedNormals->end(), nArr->begin(), nArr->end());
+        } else {
+            mergedNormals->insert(mergedNormals->end(), vertexCount, osg::Vec3(0.0f, 0.0f, 1.0f));
+        }
+
+        if (tArr && tArr->size() == vertexCount) {
             mergedTexCoords->insert(mergedTexCoords->end(), tArr->begin(), tArr->end());
         } else {
-            mergedTexCoords->insert(mergedTexCoords->end(), vArr->size(), osg::Vec2(0.0f, 0.0f));
+            mergedTexCoords->insert(mergedTexCoords->end(), vertexCount, osg::Vec2(0.0f, 0.0f));
         }
 
         if (allGeoms[i]->getNumPrimitiveSets() > 0) {
@@ -420,9 +440,6 @@ void B3DMGenerator::buildGLTFModel(
 }
 
 std::string B3DMGenerator::generateFilename(int lodLevel) const {
-    if (lodLevel == 0) {
-        return "content.b3dm";
-    }
     return "content_lod" + std::to_string(lodLevel) + ".b3dm";
 }
 
@@ -521,9 +538,6 @@ std::vector<LODFileInfo> B3DMGenerator::generateLODFiles(
         info.relativePath = filename;
         info.geometricError = geometricError;
         result.push_back(info);
-
-        LOG_I("Generated %s (LOD %zu, ratio: %.2f)",
-              filename.c_str(), i, level.target_ratio);
     }
 
     return result;

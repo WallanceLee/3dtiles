@@ -63,6 +63,12 @@ struct MeshInstanceInfo {
     int featureId = -1; // 合并后featureId
 };
 
+// Instance reference for pipeline processing
+struct InstanceRef {
+    MeshInstanceInfo* meshInfo;
+    int transformIndex;
+};
+
 class FBXLoader {
 public:
     FBXLoader(const std::string &filename);
