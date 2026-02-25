@@ -20,8 +20,13 @@ namespace shapefile {
  */
 class ShapefileSpatialItemAdapter : public spatial::core::SpatialItem {
 public:
+    // 从 shared_ptr 构造
     explicit ShapefileSpatialItemAdapter(const ShapefileDataPool::ItemPtr& item)
         : item_(item) {}
+
+    // 从原始指针构造（用于B3DM生成器）
+    explicit ShapefileSpatialItemAdapter(const ShapefileSpatialItem* item)
+        : item_(item, [](const ShapefileSpatialItem*) {}) {}
 
     spatial::core::SpatialBounds<double, 3> getBounds() const override {
         const auto& b = item_->bounds;

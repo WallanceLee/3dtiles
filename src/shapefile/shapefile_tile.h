@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 
+#include "../common/tile_path_utils.h"
+
 namespace shapefile {
 
 /**
@@ -147,21 +149,23 @@ inline TileBBox mergeBBox(const TileBBox& a, const TileBBox& b) {
  * @brief 生成瓦片路径
  *
  * 根据四叉树坐标生成 tileset.json 的相对路径
+ * 使用公共模块的TilePathUtils实现统一路径格式
  *
  * @param coord 四叉树坐标
  * @param min_z 最小层级 (该层级及以下的瓦片放在根目录)
  * @return 相对路径，如 "tileset.json" 或 "tile/5/3/2/tileset.json"
  */
 inline std::string tilesetPathForNode(const QuadtreeCoord& coord, int min_z) {
+    // 使用公共模块的TilePathUtils
+    common::TileCoord tileCoord(coord.z, coord.x, coord.y);
+    std::string path = common::TilePathUtils::getTilesetPath(tileCoord);
+
+    // 如果是最小层级，返回根目录的tileset.json
     if (coord.z <= min_z) {
         return "tileset.json";
     }
-    std::filesystem::path p = "tile";
-    p /= std::to_string(coord.z);
-    p /= std::to_string(coord.x);
-    p /= std::to_string(coord.y);
-    p /= "tileset.json";
-    return p.generic_string();
+
+    return path;
 }
 
 } // namespace shapefile
