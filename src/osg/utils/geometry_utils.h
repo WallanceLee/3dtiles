@@ -1,8 +1,8 @@
 #pragma once
 
 /**
- * @file gltf/utils/geometry_utils.h
- * @brief GLTF几何体工具类
+ * @file osg/utils/geometry_utils.h
+ * @brief OSG几何体工具类
  *
  * 从appendGeometryToModel提取的几何体处理逻辑
  * 包括：顶点变换、法线变换、索引处理
@@ -15,7 +15,7 @@
 #include <vector>
 #include <cstdint>
 
-namespace gltf {
+namespace osg {
 namespace utils {
 
 /**
@@ -101,36 +101,18 @@ public:
      */
     static osg::Vec3d transformNormal(const osg::Vec3d& normal, const osg::Matrixd& normalMatrix);
 
-private:
-    // 从数组提取数据的模板方法
-    template<typename ArrayType, typename VecType>
-    static void extractFromArray(
-        const ArrayType* array,
-        size_t index,
-        VecType& out
-    );
-
-    // 处理DrawArrays
-    static size_t processDrawArrays(
-        const osg::DrawArrays* da,
-        uint32_t baseIndex,
-        std::vector<uint32_t>& outIndices
-    );
-
-    // 处理DrawElementsUShort
-    static size_t processDrawElementsUShort(
-        const osg::DrawElementsUShort* deus,
-        uint32_t baseIndex,
-        std::vector<uint32_t>& outIndices
-    );
-
-    // 处理DrawElementsUInt
-    static size_t processDrawElementsUInt(
-        const osg::DrawElementsUInt* deui,
-        uint32_t baseIndex,
-        std::vector<uint32_t>& outIndices
+    /**
+     * @brief 计算几何体包围盒（世界空间）
+     *
+     * @param geom OSG几何体
+     * @param matrix 世界变换矩阵
+     * @return 世界空间的包围盒
+     */
+    static osg::BoundingBoxd computeWorldBounds(
+        const osg::Geometry* geom,
+        const osg::Matrixd& matrix
     );
 };
 
 } // namespace utils
-} // namespace gltf
+} // namespace osg

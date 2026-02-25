@@ -8,12 +8,12 @@
  * 协调GeometryUtils、MaterialUtils、TextureUtils和gltf_writer模块
  */
 
-#include "utils/geometry_utils.h"
-#include "utils/material_utils.h"
-#include "utils/texture_utils.h"
-#include "../gltf_writer/primitive_builder.h"
-#include "../gltf_writer/material_builder.h"
-#include "../gltf_writer/extension_manager.h"
+#include "../osg/utils/geometry_utils.h"
+#include "../osg/utils/material_utils.h"
+#include "../osg/utils/texture_utils.h"
+#include "primitive_builder.h"
+#include "material_builder.h"
+#include "extension_manager.h"
 #include "../mesh_processor.h"
 #include <osg/Geometry>
 #include <osg/Matrix>
@@ -29,7 +29,12 @@ namespace gltf {
 struct GLTFBuilderConfig {
     // Draco压缩
     bool enableDraco = false;
-    DracoCompressionParams dracoParams;
+    struct DracoCompressionParams {
+        int positionQuantizationBits = 14;
+        int normalQuantizationBits = 10;
+        int texcoordQuantizationBits = 12;
+        int compressionLevel = 7;
+    } dracoParams;
 
     // KTX2纹理压缩
     bool enableKTX2 = false;
@@ -101,7 +106,7 @@ public:
 
 private:
     GLTFBuilderConfig config_;
-    gltf_writer::ExtensionManager extMgr_;
+    ExtensionManager extMgr_;
 
     // 构建步骤
     bool buildGeometries(

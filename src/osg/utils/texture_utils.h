@@ -1,8 +1,8 @@
 #pragma once
 
 /**
- * @file gltf/utils/texture_utils.h
- * @brief GLTF纹理工具类
+ * @file osg/utils/texture_utils.h
+ * @brief OSG纹理工具类
  *
  * 从appendGeometryToModel提取的纹理处理逻辑
  * 包括：纹理加载、KTX2压缩、添加到GLTF模型
@@ -14,7 +14,7 @@
 #include <vector>
 #include <string>
 
-namespace gltf {
+namespace osg {
 namespace utils {
 
 /**
@@ -102,9 +102,9 @@ private:
         std::string& outMimeType
     );
 
-    // 获取文件扩展名对应的MIME类型
+    // 根据扩展名获取MIME类型
     static std::string getMimeTypeFromExtension(const std::string& ext);
 };
 
 } // namespace utils
-} // namespace gltf
+} // namespace osg

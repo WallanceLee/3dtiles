@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * @file gltf_writer/material_builder.h
+ * @file gltf/material_builder.h
  * @brief GLTF Material构建器
  *
  * 封装Material构建逻辑，简化GLTF材质创建
@@ -12,7 +12,7 @@
 #include <tiny_gltf.h>
 #include <vector>
 
-namespace gltf_writer {
+namespace gltf {
 
 /**
  * @brief 材质构建器
@@ -111,4 +111,4 @@ private:
     std::string alphaMode_ = "OPAQUE";
 };
 
-} // namespace gltf_writer
+} // namespace gltf

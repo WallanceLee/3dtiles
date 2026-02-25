@@ -74,7 +74,7 @@ GLTFBuildResult GLTFBuilder::buildWithMaterialGrouping(
     }
 
     // 创建Primitive
-    gltf_writer::PrimitiveBuilder primBuilder;
+    PrimitiveBuilder primBuilder;
     primBuilder.addVertices(positions);
     primBuilder.addNormals(normals);
     primBuilder.addTexcoords(texcoords);
@@ -159,10 +159,10 @@ bool GLTFBuilder::buildGeometries(
         if (!geom) continue;
 
         // 计算法线变换矩阵
-        osg::Matrixd normalMatrix = utils::GeometryUtils::computeNormalMatrix(inst.matrix);
+        osg::Matrixd normalMatrix = osg::utils::GeometryUtils::computeNormalMatrix(inst.matrix);
 
         // 提取几何体数据
-        size_t vertexCount = utils::GeometryUtils::extractGeometryData(
+        size_t vertexCount = osg::utils::GeometryUtils::extractGeometryData(
             geom,
             inst.matrix,
             normalMatrix,
@@ -175,7 +175,7 @@ bool GLTFBuilder::buildGeometries(
         // 处理索引
         for (unsigned int j = 0; j < geom->getNumPrimitiveSets(); ++j) {
             osg::PrimitiveSet* ps = geom->getPrimitiveSet(j);
-            utils::GeometryUtils::processPrimitiveSet(ps, baseIndex, indices);
+            osg::utils::GeometryUtils::processPrimitiveSet(ps, baseIndex, indices);
         }
 
         // 添加batch ID（用于B3DM）
@@ -219,11 +219,11 @@ int GLTFBuilder::buildMaterialFromGeometry(
     const osg::StateSet* stateSet = geom ? geom->getStateSet() : nullptr;
 
     // 提取PBR参数
-    utils::PBRParams pbrParams;
-    utils::MaterialUtils::extractPBRParams(stateSet, pbrParams);
+    osg::utils::PBRParams pbrParams;
+    osg::utils::MaterialUtils::extractPBRParams(stateSet, pbrParams);
 
     // 创建材质构建器
-    gltf_writer::MaterialBuilder matBuilder;
+    MaterialBuilder matBuilder;
     matBuilder.setBaseColor(pbrParams.baseColor);
     matBuilder.setPBRParams(pbrParams.roughnessFactor, pbrParams.metallicFactor);
     matBuilder.setEmissiveColor({pbrParams.emissiveColor[0], pbrParams.emissiveColor[1], pbrParams.emissiveColor[2]});
@@ -231,15 +231,15 @@ int GLTFBuilder::buildMaterialFromGeometry(
     matBuilder.setUnlit(config_.enableUnlit);
 
     // 处理纹理
-    const osg::Texture* baseColorTex = utils::MaterialUtils::getBaseColorTexture(stateSet);
+    const osg::Texture* baseColorTex = osg::utils::MaterialUtils::getBaseColorTexture(stateSet);
     if (baseColorTex) {
-        auto texResult = utils::TextureUtils::processTexture(baseColorTex, config_.enableKTX2);
+        auto texResult = osg::utils::TextureUtils::processTexture(baseColorTex, config_.enableKTX2);
         if (texResult.success) {
             bool useBasisu = (texResult.mimeType == "image/ktx2");
             if (useBasisu) {
                 extMgr_.useAndRequire("KHR_texture_basisu");
             }
-            int texIdx = utils::TextureUtils::addImageToModel(
+            int texIdx = osg::utils::TextureUtils::addImageToModel(
                 model, buffer, texResult.data, texResult.mimeType, useBasisu);
             matBuilder.setBaseColorTexture(texIdx);
 
@@ -249,15 +249,15 @@ int GLTFBuilder::buildMaterialFromGeometry(
         }
     }
 
-    const osg::Texture* normalTex = utils::MaterialUtils::getNormalTexture(stateSet);
+    const osg::Texture* normalTex = osg::utils::MaterialUtils::getNormalTexture(stateSet);
     if (normalTex) {
-        auto texResult = utils::TextureUtils::processTexture(normalTex, config_.enableKTX2);
+        auto texResult = osg::utils::TextureUtils::processTexture(normalTex, config_.enableKTX2);
         if (texResult.success) {
             bool useBasisu = (texResult.mimeType == "image/ktx2");
             if (useBasisu) {
                 extMgr_.useAndRequire("KHR_texture_basisu");
             }
-            int texIdx = utils::TextureUtils::addImageToModel(
+            int texIdx = osg::utils::TextureUtils::addImageToModel(
                 model, buffer, texResult.data, texResult.mimeType, useBasisu);
             matBuilder.setNormalTexture(texIdx);
         }

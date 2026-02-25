@@ -1,7 +1,7 @@
 #include "material_utils.h"
 #include <osg/Texture>
 
-namespace gltf {
+namespace osg {
 namespace utils {
 
 void MaterialUtils::extractPBRParams(
@@ -138,4 +138,4 @@ void MaterialUtils::extractUniformsFromStateSet(
 }
 
 } // namespace utils
-} // namespace gltf
+} // namespace osg

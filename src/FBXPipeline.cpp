@@ -24,11 +24,11 @@
 #include <typeinfo>
 #include <osg/GL>
 #include <cmath>
-#include "gltf_writer/extensions/texture_transform.h"
-#include "gltf_writer/extensions/specular_glossiness.h"
-#include "gltf/utils/geometry_utils.h"
-#include "gltf/utils/texture_utils.h"
-#include "gltf/utils/material_utils.h"
+#include "gltf/extensions/texture_transform.h"
+#include "gltf/extensions/specular_glossiness.h"
+#include "osg/utils/geometry_utils.h"
+#include "osg/utils/texture_utils.h"
+#include "osg/utils/material_utils.h"
 
 // Stage 2: New architecture integration
 #include "spatial/strategy/octree_strategy.h"
@@ -42,7 +42,6 @@
 #include "fbx/fbx_tileset_adapter.h"
 
 using json = nlohmann::json;
-using namespace gltf::utils;
 namespace fs = std::filesystem;
 
 // Helper to check point in box

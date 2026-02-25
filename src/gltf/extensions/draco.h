@@ -4,7 +4,7 @@
 #include <tiny_gltf.h>
 #include "../extension_manager.h"
 
-namespace gltf_writer::extensions {
+namespace gltf::extensions {
 
 struct DracoCompression {
     int buffer_view = -1;
@@ -44,4 +44,4 @@ inline bool hasDracoCompression(const tinygltf::Primitive& primitive) {
     return primitive.extensions.count("KHR_draco_mesh_compression") > 0;
 }
 
-}
+} // namespace gltf::extensions

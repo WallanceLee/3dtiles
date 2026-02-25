@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace gltf {
+namespace osg {
 namespace utils {
 
 TextureResult TextureUtils::processTexture(
@@ -261,4 +261,4 @@ std::string TextureUtils::getMimeTypeFromExtension(const std::string& ext) {
 }
 
 } // namespace utils
-} // namespace gltf
+} // namespace osg

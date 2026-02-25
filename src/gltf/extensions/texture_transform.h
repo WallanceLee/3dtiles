@@ -4,7 +4,7 @@
 #include <tiny_gltf.h>
 #include "../extension_manager.h"
 
-namespace gltf_writer::extensions {
+namespace gltf::extensions {
 
 struct TextureTransform {
     std::array<float, 2> offset = {0.0f, 0.0f};
@@ -76,4 +76,4 @@ inline void applyTextureTransform(tinygltf::Material& material,
     ext_mgr.use("KHR_texture_transform");
 }
 
-}
+} // namespace gltf::extensions

@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <tiny_gltf.h>
 
-namespace gltf_writer {
+namespace gltf {
 
 class ExtensionManager {
 public:
@@ -51,4 +51,4 @@ private:
     std::set<std::string> required_;
 };
 
-}
+} // namespace gltf

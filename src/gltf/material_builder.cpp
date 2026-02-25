@@ -1,6 +1,6 @@
 #include "material_builder.h"
 
-namespace gltf_writer {
+namespace gltf {
 
 MaterialBuilder::MaterialBuilder()
     : baseColor_({1.0, 1.0, 1.0, 1.0})
@@ -111,4 +111,4 @@ int MaterialBuilder::build(tinygltf::Model& model, ExtensionManager& extMgr) {
     return index;
 }
 
-} // namespace gltf_writer
+} // namespace gltf

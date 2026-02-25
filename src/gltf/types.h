@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace gltf_writer {
+namespace gltf {
 
 enum class ComponentType : int {
     Byte = 5120,
@@ -59,4 +59,4 @@ inline int toTinyGltf(AccessorType t) { return static_cast<int>(t); }
 inline int toTinyGltf(PrimitiveMode m) { return static_cast<int>(m); }
 inline int toTinyGltf(BufferViewTarget t) { return static_cast<int>(t); }
 
-}
+} // namespace gltf

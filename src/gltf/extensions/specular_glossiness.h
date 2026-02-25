@@ -4,7 +4,7 @@
 #include <tiny_gltf.h>
 #include "../extension_manager.h"
 
-namespace gltf_writer::extensions {
+namespace gltf::extensions {
 
 struct SpecularGlossiness {
     std::array<double, 4> diffuse_factor = {1.0, 1.0, 1.0, 1.0};
@@ -91,4 +91,4 @@ inline void applySpecularGlossiness(tinygltf::Material& material,
     ext_mgr.use("KHR_materials_pbrSpecularGlossiness");
 }
 
-}
+} // namespace gltf::extensions

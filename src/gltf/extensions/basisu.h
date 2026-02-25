@@ -3,7 +3,7 @@
 #include <tiny_gltf.h>
 #include "../extension_manager.h"
 
-namespace gltf_writer::extensions {
+namespace gltf::extensions {
 
 inline void applyBasisu(tinygltf::Texture& texture, int source_index, ExtensionManager& ext_mgr) {
     tinygltf::Value::Object ext_obj;
@@ -31,4 +31,4 @@ inline int getBasisuSource(const tinygltf::Texture& texture) {
     return -1;
 }
 
-}
+} // namespace gltf::extensions

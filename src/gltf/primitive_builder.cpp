@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace gltf_writer {
+namespace gltf {
 
 PrimitiveBuilder::PrimitiveBuilder()
     : materialIndex_(-1)
@@ -196,4 +196,4 @@ int PrimitiveBuilder::createAccessor(
     return index;
 }
 
-} // namespace gltf_writer
+} // namespace gltf

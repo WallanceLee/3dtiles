@@ -7,7 +7,7 @@
 #include <osg/Array>
 #include <algorithm>
 
-namespace gltf {
+namespace osg {
 namespace utils {
 
 osg::Matrixd GeometryUtils::computeNormalMatrix(const osg::Matrixd& matrix) {
@@ -183,6 +183,22 @@ size_t GeometryUtils::extractGeometryData(
     return outPositions.size() / 3 - startIdx;
 }
 
+// 前向声明内部辅助函数
+static size_t processDrawArrays(
+    const osg::DrawArrays* da,
+    uint32_t baseIndex,
+    std::vector<uint32_t>& outIndices);
+
+static size_t processDrawElementsUShort(
+    const osg::DrawElementsUShort* deus,
+    uint32_t baseIndex,
+    std::vector<uint32_t>& outIndices);
+
+static size_t processDrawElementsUInt(
+    const osg::DrawElementsUInt* deui,
+    uint32_t baseIndex,
+    std::vector<uint32_t>& outIndices);
+
 size_t GeometryUtils::processPrimitiveSet(
     const osg::PrimitiveSet* ps,
     uint32_t baseIndex,
@@ -214,7 +230,35 @@ size_t GeometryUtils::processPrimitiveSet(
     return 0;
 }
 
-size_t GeometryUtils::processDrawArrays(
+osg::BoundingBoxd GeometryUtils::computeWorldBounds(
+    const osg::Geometry* geom,
+    const osg::Matrixd& matrix) {
+    
+    osg::BoundingBoxd worldBounds;
+    if (!geom) return worldBounds;
+
+    const osg::Array* va = geom->getVertexArray();
+    if (!va) return worldBounds;
+
+    const osg::Vec3Array* v3 = dynamic_cast<const osg::Vec3Array*>(va);
+    const osg::Vec3dArray* v3d = dynamic_cast<const osg::Vec3dArray*>(va);
+
+    if (v3) {
+        for (const auto& v : *v3) {
+            worldBounds.expandBy(transformVertex(osg::Vec3d(v), matrix));
+        }
+    } else if (v3d) {
+        for (const auto& v : *v3d) {
+            worldBounds.expandBy(transformVertex(v, matrix));
+        }
+    }
+
+    return worldBounds;
+}
+
+// 内部辅助函数实现
+
+static size_t processDrawArrays(
     const osg::DrawArrays* da,
     uint32_t baseIndex,
     std::vector<uint32_t>& outIndices) {
@@ -260,7 +304,7 @@ size_t GeometryUtils::processDrawArrays(
     return triangleCount;
 }
 
-size_t GeometryUtils::processDrawElementsUShort(
+static size_t processDrawElementsUShort(
     const osg::DrawElementsUShort* deus,
     uint32_t baseIndex,
     std::vector<uint32_t>& outIndices) {
@@ -303,7 +347,7 @@ size_t GeometryUtils::processDrawElementsUShort(
     return triangleCount;
 }
 
-size_t GeometryUtils::processDrawElementsUInt(
+static size_t processDrawElementsUInt(
     const osg::DrawElementsUInt* deui,
     uint32_t baseIndex,
     std::vector<uint32_t>& outIndices) {
@@ -347,4 +391,4 @@ size_t GeometryUtils::processDrawElementsUInt(
 }
 
 } // namespace utils
-} // namespace gltf
+} // namespace osg

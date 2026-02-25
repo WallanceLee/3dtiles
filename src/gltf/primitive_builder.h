@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * @file gltf_writer/primitive_builder.h
+ * @file gltf/primitive_builder.h
  * @brief GLTF Primitive构建器
  *
  * 封装Primitive构建逻辑，简化GLTF网格创建
@@ -12,7 +12,7 @@
 #include <vector>
 #include <cstdint>
 
-namespace gltf_writer {
+namespace gltf {
 
 /**
  * @brief Primitive构建器
@@ -123,4 +123,4 @@ private:
     );
 };
 
-} // namespace gltf_writer
+} // namespace gltf

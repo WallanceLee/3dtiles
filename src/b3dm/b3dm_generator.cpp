@@ -1,6 +1,6 @@
 #include "b3dm_generator.h"
 #include "../extern.h"
-#include "../gltf_writer/extension_manager.h"
+#include "../gltf/extension_manager.h"
 
 #include <tiny_gltf.h>
 #include <osg/Geometry>
