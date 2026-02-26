@@ -21,6 +21,7 @@ extern "C" {
     ) -> *mut libc::c_void;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn convert_fbx(
     in_file: &str,
     out_dir: &str,

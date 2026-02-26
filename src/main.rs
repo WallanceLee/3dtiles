@@ -11,10 +11,12 @@ extern crate env_logger;
 extern crate libc;
 
 mod common;
+mod error;
 mod fbx;
 pub mod fun_c;
 mod osgb;
 mod shape;
+mod utils;
 
 use chrono::prelude::*;
 use clap::{Arg, ArgAction, Command};
@@ -75,7 +77,7 @@ fn main() {
     // Setup OSG plugin path for runtime plugin loading
     setup_osg_environment();
 
-    if let Err(_) = env::var("RUST_LOG") {
+    if env::var("RUST_LOG").is_err() {
         unsafe { env::set_var("RUST_LOG", "info") };
     }
     unsafe { env::set_var("RUST_BACKTRACE", "1") };
@@ -87,7 +89,7 @@ fn main() {
                 buf,
                 "{}: {} - {}",
                 record.level(),
-                dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                dt.format("%Y-%m-%d %H:%M:%S"),
                 record.args()
             )
         })
@@ -342,6 +344,7 @@ fn main() {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn convert_fbx_cmd(
     input: &str,
     output: &str,
@@ -512,7 +515,7 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
         // read and parse
         if let Ok(mut f) = File::open(&metadata_file) {
             let mut buffer = String::new();
-            if let Ok(_) = f.read_to_string(&mut buffer) {
+            if f.read_to_string(&mut buffer).is_ok() {
                 info!("metadata.xml content: {}", buffer);
                 //
                 match serde_xml_rs::from_str::<ModelMetadata>(buffer.as_str()) {
@@ -524,11 +527,9 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
                             if v[0] == "ENU" {
                                 let v1: Vec<&str> = v[1].split(",").collect();
                                 if v1.len() > 1 {
-                                    let v1_num = (*v1[0]).parse::<f64>();
-                                    let v2_num = v1[1].parse::<f64>();
-                                    if v1_num.is_ok() && v2_num.is_ok() {
-                                        center_y = v1_num.unwrap();
-                                        center_x = v2_num.unwrap();
+                                    if let (Ok(y), Ok(x)) = (v1[0].parse::<f64>(), v1[1].parse::<f64>()) {
+                                        center_y = y;
+                                        center_x = x;
 
                                         // Parse and apply SRSOrigin offset
                                         let origin_parts: Vec<&str> =
@@ -546,35 +547,31 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
                                                 };
 
                                                 // Call enu_init to set up GeoTransform for geometry correction
-                                                let gdal_data: String = {
-                                                    use std::path::Path;
-                                                    let exe_dir = ::std::env::current_exe().unwrap();
-                                                    Path::new(&exe_dir)
-                                                        .parent()
-                                                        .unwrap()
-                                                        .join("gdal")
-                                                        .to_str()
-                                                        .unwrap()
-                                                        .into()
-                                                };
-                                                let proj_lib: String = {
-                                                    use std::path::Path;
-                                                    let exe_dir = ::std::env::current_exe().unwrap();
-                                                    Path::new(&exe_dir)
-                                                        .parent()
-                                                        .unwrap()
-                                                        .join("proj")
-                                                        .to_str()
-                                                        .unwrap()
-                                                        .into()
+                                                let (gdal_data, proj_lib) = match (utils::get_gdal_data_path(), utils::get_proj_data_path()) {
+                                                    (Ok(gdal), Ok(proj)) => (gdal, proj),
+                                                    (Err(e), _) | (_, Err(e)) => {
+                                                        error!("Failed to get GDAL/PROJ path: {}", e);
+                                                        return;
+                                                    }
                                                 };
 
                                                 unsafe {
-                                                    use std::ffi::CString;
                                                     let mut origin_enu = vec![offset_x, offset_y, offset_z];
-                                                    let gdal_c_str = CString::new(gdal_data).unwrap();
+                                                    let gdal_c_str = match utils::string_to_cstring(gdal_data) {
+                                                        Ok(s) => s,
+                                                        Err(e) => {
+                                                            error!("Invalid GDAL path: {}", e);
+                                                            return;
+                                                        }
+                                                    };
                                                     let gdal_ptr = gdal_c_str.as_ptr();
-                                                    let proj_c_str = CString::new(proj_lib).unwrap();
+                                                    let proj_c_str = match utils::string_to_cstring(proj_lib) {
+                                                        Ok(s) => s,
+                                                        Err(e) => {
+                                                            error!("Invalid PROJ path: {}", e);
+                                                            return;
+                                                        }
+                                                    };
                                                     let proj_ptr = proj_c_str.as_ptr();
                                                     if !osgb::enu_init(center_x, center_y, origin_enu.as_mut_ptr(), gdal_ptr, proj_ptr) {
                                                         error!("enu_init failed!");
@@ -606,54 +603,56 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
                             } else if v[0] == "EPSG" {
                                 // call gdal to convert
                                 if let Ok(srs) = v[1].parse::<i32>() {
-                                    let mut pt: Vec<f64> = metadata
+                                    let pt_result: Result<Vec<f64>, _> = metadata
                                         .SRSOrigin
                                         .split(",")
-                                        .map(|v| v.parse().unwrap())
+                                        .map(|v| v.parse())
                                         .collect();
-                                    if pt.len() >= 2 {
-                                        let gdal_data: String = {
-                                            use std::path::Path;
-                                            let exe_dir = ::std::env::current_exe().unwrap();
-                                            Path::new(&exe_dir)
-                                                .parent()
-                                                .unwrap()
-                                                .join("gdal")
-                                                .to_str()
-                                                .unwrap()
-                                                .into()
-                                        };
-                                        let proj_lib: String = {
-                                            use std::path::Path;
-                                            let exe_dir = ::std::env::current_exe().unwrap();
-                                            Path::new(&exe_dir)
-                                                .parent()
-                                                .unwrap()
-                                                .join("proj")
-                                                .to_str()
-                                                .unwrap()
-                                                .into()
-                                        };
-                                        unsafe {
-                                            use std::ffi::CString;
-                                            let gdal_c_str = CString::new(gdal_data).unwrap();
-                                            let gdal_ptr = gdal_c_str.as_ptr();
-                                            let proj_c_str = CString::new(proj_lib).unwrap();
-                                            let proj_ptr = proj_c_str.as_ptr();
-                                            if osgb::epsg_convert(srs, pt.as_mut_ptr(), gdal_ptr, proj_ptr) {
-                                                center_x = pt[0];
-                                                center_y = pt[1];
-                                                // Use the geoid-corrected height from GeoTransform (if geoid is initialized)
-                                                // This handles the conversion from orthometric height (China 1985) to ellipsoidal height (WGS84)
-                                                let geo_origin_height = osgb::get_geo_origin_height();
-                                                origin_height = Some(geo_origin_height);
-                                                info!("epsg: x->{}, y->{}, h={} (geoid-corrected from original h={})", pt[0], pt[1], geo_origin_height, pt[2]);
-                                            } else {
-                                                error!("epsg convert failed!");
+                                    match pt_result {
+                                        Ok(mut pt) if pt.len() >= 2 => {
+                                            let (gdal_data, proj_lib) = match (utils::get_gdal_data_path(), utils::get_proj_data_path()) {
+                                                (Ok(gdal), Ok(proj)) => (gdal, proj),
+                                                (Err(e), _) | (_, Err(e)) => {
+                                                    error!("Failed to get GDAL/PROJ path: {}", e);
+                                                    return;
+                                                }
+                                            };
+                                            unsafe {
+                                                let gdal_c_str = match utils::string_to_cstring(gdal_data) {
+                                                    Ok(s) => s,
+                                                    Err(e) => {
+                                                        error!("Invalid GDAL path: {}", e);
+                                                        return;
+                                                    }
+                                                };
+                                                let gdal_ptr = gdal_c_str.as_ptr();
+                                                let proj_c_str = match utils::string_to_cstring(proj_lib) {
+                                                    Ok(s) => s,
+                                                    Err(e) => {
+                                                        error!("Invalid PROJ path: {}", e);
+                                                        return;
+                                                    }
+                                                };
+                                                let proj_ptr = proj_c_str.as_ptr();
+                                                if osgb::epsg_convert(srs, pt.as_mut_ptr(), gdal_ptr, proj_ptr) {
+                                                    center_x = pt[0];
+                                                    center_y = pt[1];
+                                                    // Use the geoid-corrected height from GeoTransform (if geoid is initialized)
+                                                    // This handles the conversion from orthometric height (China 1985) to ellipsoidal height (WGS84)
+                                                    let geo_origin_height = osgb::get_geo_origin_height();
+                                                    origin_height = Some(geo_origin_height);
+                                                    info!("epsg: x->{}, y->{}, h={} (geoid-corrected from original h={})", pt[0], pt[1], geo_origin_height, pt[2]);
+                                                } else {
+                                                    error!("epsg convert failed!");
+                                                }
                                             }
                                         }
-                                    } else {
-                                        error!("epsg point is not enough");
+                                        Ok(_) => {
+                                            error!("epsg point is not enough");
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to parse EPSG points: {}", e);
+                                        }
                                     }
                                 } else {
                                     error!("parse EPSG failed");
@@ -665,38 +664,61 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
                         } else {
                             // error!("SRS content error");
                             // treat as wkt
-                            let mut pt: Vec<f64> = metadata
+                            let pt_result: Result<Vec<f64>, _> = metadata
                                 .SRSOrigin
                                 .split(",")
-                                .map(|v| v.parse().unwrap())
+                                .map(|v| v.parse())
                                 .collect();
-                            if pt.len() >= 2 {
-                                let gdal_data: String = {
-                                    use std::path::Path;
-                                    let exe_dir = ::std::env::current_exe().unwrap();
-                                    Path::new(&exe_dir)
-                                        .parent()
-                                        .unwrap()
-                                        .join("gdal_data")
-                                        .to_str()
-                                        .unwrap()
-                                        .into()
-                                };
-                                unsafe {
-                                    use std::ffi::CString;
-                                    let wkt: String = metadata.SRS;
-                                    // println!("{:?}", wkt);
-                                    let c_str = CString::new(gdal_data).unwrap();
-                                    let ptr = c_str.as_ptr();
-                                    let wkt_cstr = CString::new(wkt).unwrap();
-                                    let wkt_ptr = wkt_cstr.as_ptr();
-                                    if osgb::wkt_convert(wkt_ptr, pt.as_mut_ptr(), ptr) {
-                                        center_x = pt[0];
-                                        center_y = pt[1];
-                                        info!("wkt: x->{}, y->{}", pt[0], pt[1]);
-                                    } else {
-                                        error!("wkt convert failed!");
+                            match pt_result {
+                                Ok(mut pt) if pt.len() >= 2 => {
+                                    let exe_dir = match utils::get_exe_dir() {
+                                        Ok(dir) => dir,
+                                        Err(e) => {
+                                            error!("Failed to get exe dir: {}", e);
+                                            return;
+                                        }
+                                    };
+                                    let gdal_data_path = exe_dir.join("gdal_data");
+                                    let gdal_data = match utils::path_to_string(&gdal_data_path) {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            error!("Invalid GDAL data path: {}", e);
+                                            return;
+                                        }
+                                    };
+                                    unsafe {
+                                        let wkt: String = metadata.SRS;
+                                        // println!("{:?}", wkt);
+                                        let c_str = match utils::string_to_cstring(gdal_data) {
+                                            Ok(s) => s,
+                                            Err(e) => {
+                                                error!("Invalid GDAL path: {}", e);
+                                                return;
+                                            }
+                                        };
+                                        let ptr = c_str.as_ptr();
+                                        let wkt_cstr = match utils::string_to_cstring(wkt) {
+                                            Ok(s) => s,
+                                            Err(e) => {
+                                                error!("Invalid WKT: {}", e);
+                                                return;
+                                            }
+                                        };
+                                        let wkt_ptr = wkt_cstr.as_ptr();
+                                        if osgb::wkt_convert(wkt_ptr, pt.as_mut_ptr(), ptr) {
+                                            center_x = pt[0];
+                                            center_y = pt[1];
+                                            info!("wkt: x->{}, y->{}", pt[0], pt[1]);
+                                        } else {
+                                            error!("wkt convert failed!");
+                                        }
                                     }
+                                }
+                                Ok(_) => {
+                                    error!("WKT point is not enough");
+                                }
+                                Err(e) => {
+                                    error!("Failed to parse WKT points: {}", e);
                                 }
                             }
                         }
@@ -727,12 +749,12 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
         if let Some(lvl) = v["max_lvl"].as_i64() {
             max_lvl = Some(lvl as i32);
         }
-    } else if config.len() > 0 {
+    } else if !config.is_empty() {
         error!("config error --> {}", config);
     }
     let tick = time::SystemTime::now();
     if let Err(e) = osgb::osgb_batch_convert(
-        &dir, &dir_dest, max_lvl,
+        dir, dir_dest, max_lvl,
         center_x, center_y, trans_region,
         enu_offset, origin_height, enable_texture_compress, enable_simplify, enable_draco, enable_unlit)
     {

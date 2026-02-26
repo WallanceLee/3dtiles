@@ -67,6 +67,7 @@ struct OsgbInfo {
     sender: ::std::sync::mpsc::Sender<TileResult>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn osgb_batch_convert(
     dir: &Path,
     dir_dest: &Path,
@@ -155,7 +156,7 @@ pub fn osgb_batch_convert(
                 libc::free(out_ptr);
             }
             let t = TileResult {
-                path: info.out_dir.into(),
+                path: info.out_dir,
                 json: String::from_utf8(json_buf).unwrap(),
                 box_v: root_box,
             };
@@ -175,14 +176,14 @@ pub fn osgb_batch_convert(
     let mut root_box = vec![-1.0E+38f64, -1.0E+38, -1.0E+38, 1.0E+38, 1.0E+38, 1.0E+38];
     let mut root_geometric_error = 0.0;
     for x in tile_array.iter() {
-        for i in 0..3 {
-            if x.box_v[i] > root_box[i] {
-                root_box[i] = x.box_v[i]
+        for (i, root_val) in root_box.iter_mut().enumerate().take(3) {
+            if x.box_v[i] > *root_val {
+                *root_val = x.box_v[i]
             }
         }
-        for i in 3..6 {
-            if x.box_v[i] < root_box[i] {
-                root_box[i] = x.box_v[i]
+        for (i, root_val) in root_box.iter_mut().enumerate().take(6).skip(3) {
+            if x.box_v[i] < *root_val {
+                *root_val = x.box_v[i]
             }
         }
         let json_val: serde_json::Value = serde_json::from_str(&x.json).unwrap();
@@ -281,24 +282,20 @@ fn get_geometric_error(center_y: f64, lvl: i32) -> f64 {
     4.0 * round / (256 * pow) as f64
 }
 
-fn box_to_tileset_box(box_v: &Vec<f64>) -> Vec<f64> {
-    let mut box_new = vec![];
-    box_new.push((box_v[0] + box_v[3]) / 2.0);
-    box_new.push((box_v[1] + box_v[4]) / 2.0);
-    box_new.push((box_v[2] + box_v[5]) / 2.0);
-
-    box_new.push((box_v[3] - box_v[0]).abs() / 2.0);
-    box_new.push(0.0);
-    box_new.push(0.0);
-
-    box_new.push(0.0);
-    box_new.push((box_v[4] - box_v[1]).abs() / 2.0);
-    box_new.push(0.0);
-
-    box_new.push(0.0);
-    box_new.push(0.0);
-    box_new.push((box_v[5] - box_v[2]).abs() / 2.0);
-
-    box_new
+fn box_to_tileset_box(box_v: &[f64]) -> Vec<f64> {
+    vec![
+        (box_v[0] + box_v[3]) / 2.0,
+        (box_v[1] + box_v[4]) / 2.0,
+        (box_v[2] + box_v[5]) / 2.0,
+        (box_v[3] - box_v[0]).abs() / 2.0,
+        0.0,
+        0.0,
+        0.0,
+        (box_v[4] - box_v[1]).abs() / 2.0,
+        0.0,
+        0.0,
+        0.0,
+        (box_v[5] - box_v[2]).abs() / 2.0,
+    ]
 }
 

@@ -1,12 +1,17 @@
+/// # Safety
+/// This function is unsafe because it dereferences raw pointers.
+/// The caller must ensure that:
+/// - `file_name` is a valid, null-terminated C string
+/// - `buf` is a valid pointer to at least `buf_len` bytes
 #[no_mangle]
-pub extern "C" fn write_file(file_name: *const libc::c_char, buf: *const u8, buf_len: u32) -> bool {
+pub unsafe extern "C" fn write_file(file_name: *const libc::c_char, buf: *const u8, buf_len: u32) -> bool {
     use std::ffi;
     use std::fs;
     use std::fs::File;
     use std::io::prelude::*;
     use std::slice;
 
-    unsafe {
+    {
         if let Ok(file_name) = ffi::CStr::from_ptr(file_name).to_str() {
             use std::path::Path;
             let path = Path::new(file_name);
@@ -37,11 +42,14 @@ pub extern "C" fn write_file(file_name: *const libc::c_char, buf: *const u8, buf
     }
 }
 
+/// # Safety
+/// This function is unsafe because it dereferences a raw pointer.
+/// The caller must ensure that `path` is a valid, null-terminated C string.
 #[no_mangle]
-pub extern "C" fn mkdirs(path: *const libc::c_char) -> bool {
+pub unsafe extern "C" fn mkdirs(path: *const libc::c_char) -> bool {
     use std::ffi;
     use std::fs;
-    unsafe {
+    {
         match ffi::CStr::from_ptr(path).to_str() {
             Ok(buf) => match fs::create_dir_all(buf) {
                 Ok(_) => true,
