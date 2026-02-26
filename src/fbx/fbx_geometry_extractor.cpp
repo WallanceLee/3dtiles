@@ -1,8 +1,27 @@
 #include "fbx_geometry_extractor.h"
 #include "fbx_spatial_item_adapter.h"
 #include "../extern.h"
+#include "../osg/utils/material_utils.h"
 
 namespace fbx {
+
+namespace {
+    /**
+     * @brief 复制纹理变换数据
+     */
+    void copyTextureTransform(const ::TextureTransformData& src,
+                              common::TextureTransformInfo& dst) {
+        if (src.has_transform) {
+            dst.hasTransform = true;
+            dst.offset[0] = src.offset[0];
+            dst.offset[1] = src.offset[1];
+            dst.scale[0] = src.scale[0];
+            dst.scale[1] = src.scale[1];
+            dst.rotation = src.rotation;
+            dst.texCoord = src.tex_coord;
+        }
+    }
+}
 
 std::vector<osg::ref_ptr<osg::Geometry>> FBXGeometryExtractor::extract(
     const spatial::core::SpatialItem* item) {
@@ -115,6 +134,95 @@ std::map<std::string, nlohmann::json> FBXGeometryExtractor::getAttributes(
     // 可以添加更多属性...
 
     return attrs;
+}
+
+std::shared_ptr<common::MaterialInfo> FBXGeometryExtractor::getMaterial(
+    const spatial::core::SpatialItem* item) {
+
+    const auto* fbxItem = dynamic_cast<const FBXSpatialItemAdapter*>(item);
+    if (!fbxItem) {
+        LOG_W("FBXGeometryExtractor::getMaterial: item is not FBXSpatialItemAdapter");
+        return std::make_shared<common::MaterialInfo>();
+    }
+
+    // 获取几何体的StateSet
+    const osg::Geometry* geom = fbxItem->getGeometry();
+    if (!geom) {
+        return std::make_shared<common::MaterialInfo>();
+    }
+
+    const osg::StateSet* stateSet = geom->getStateSet();
+    if (!stateSet) {
+        // 没有StateSet表示使用默认材质
+        return std::make_shared<common::MaterialInfo>();
+    }
+
+    auto materialInfo = std::make_shared<common::MaterialInfo>();
+
+    // ===== 提取基础PBR参数 =====
+    osg::utils::PBRParams pbrParams;
+    osg::utils::MaterialUtils::extractPBRParams(stateSet, pbrParams);
+
+    materialInfo->baseColor = pbrParams.baseColor;
+    materialInfo->roughnessFactor = pbrParams.roughnessFactor;
+    materialInfo->metallicFactor = pbrParams.metallicFactor;
+    materialInfo->emissiveColor = {
+        pbrParams.emissiveColor[0],
+        pbrParams.emissiveColor[1],
+        pbrParams.emissiveColor[2]
+    };
+    materialInfo->aoStrength = pbrParams.aoStrength;
+
+    // ===== 提取纹理对象 =====
+    materialInfo->baseColorTexture =
+        const_cast<osg::Texture*>(osg::utils::MaterialUtils::getBaseColorTexture(stateSet));
+    materialInfo->normalTexture =
+        const_cast<osg::Texture*>(osg::utils::MaterialUtils::getNormalTexture(stateSet));
+    materialInfo->emissiveTexture =
+        const_cast<osg::Texture*>(osg::utils::MaterialUtils::getEmissiveTexture(stateSet));
+
+    // 金属度/粗糙度和遮挡纹理需要从其他纹理单元获取
+    // 根据FBXLoader的实现，它们可能在特定的纹理单元
+    if (stateSet->getTextureAttributeList().size() > 2) {
+        materialInfo->metallicRoughnessTexture =
+            const_cast<osg::Texture*>(dynamic_cast<const osg::Texture*>(
+                stateSet->getTextureAttribute(2, osg::StateAttribute::TEXTURE)));
+    }
+    if (stateSet->getTextureAttributeList().size() > 3) {
+        materialInfo->occlusionTexture =
+            const_cast<osg::Texture*>(dynamic_cast<const osg::Texture*>(
+                stateSet->getTextureAttribute(3, osg::StateAttribute::TEXTURE)));
+    }
+
+    // ===== 提取纹理变换和Specular-Glossiness数据 =====
+    const MaterialExtensionData* extData = fbxItem->getMaterialExtensionData();
+    if (extData) {
+        // 复制纹理变换
+        copyTextureTransform(extData->base_color_transform, materialInfo->baseColorTransform);
+        copyTextureTransform(extData->normal_transform, materialInfo->normalTransform);
+        copyTextureTransform(extData->metallic_roughness_transform, materialInfo->metallicRoughnessTransform);
+        copyTextureTransform(extData->occlusion_transform, materialInfo->occlusionTransform);
+        copyTextureTransform(extData->emissive_transform, materialInfo->emissiveTransform);
+
+        // 复制Specular-Glossiness数据
+        if (extData->specular_glossiness.use_specular_glossiness) {
+            materialInfo->useSpecularGlossiness = true;
+            materialInfo->diffuseFactor = {
+                extData->specular_glossiness.diffuse_factor[0],
+                extData->specular_glossiness.diffuse_factor[1],
+                extData->specular_glossiness.diffuse_factor[2],
+                extData->specular_glossiness.diffuse_factor[3]
+            };
+            materialInfo->specularFactor = {
+                extData->specular_glossiness.specular_factor[0],
+                extData->specular_glossiness.specular_factor[1],
+                extData->specular_glossiness.specular_factor[2]
+            };
+            materialInfo->glossinessFactor = extData->specular_glossiness.glossiness_factor;
+        }
+    }
+
+    return materialInfo;
 }
 
 } // namespace fbx

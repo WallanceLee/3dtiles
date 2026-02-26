@@ -95,6 +95,7 @@ void MaterialUtils::extractColorsFromMaterial(
     }
 
     // 提取diffuse颜色作为基础颜色
+    // FBXLoader中设置材质时使用的是FRONT
     osg::Vec4 diffuse = material->getDiffuse(osg::Material::FRONT);
     params.baseColor = {
         static_cast<double>(diffuse.r()),

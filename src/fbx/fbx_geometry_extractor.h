@@ -41,6 +41,21 @@ public:
      */
     std::map<std::string, nlohmann::json> getAttributes(
         const spatial::core::SpatialItem* item) override;
+
+    /**
+     * @brief 获取对象的材质信息
+     *
+     * 从FBX空间对象提取完整的材质信息，包括：
+     * - PBR参数（baseColor, roughness, metallic等）
+     * - 纹理对象（从StateSet提取）
+     * - 纹理变换（从MaterialExtensionData提取）
+     * - Specular-Glossiness参数（传统FBX材质）
+     *
+     * @param item FBX空间对象
+     * @return 材质信息，如果没有材质返回默认材质
+     */
+    std::shared_ptr<common::MaterialInfo> getMaterial(
+        const spatial::core::SpatialItem* item) override;
 };
 
 } // namespace fbx

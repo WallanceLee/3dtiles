@@ -34,6 +34,17 @@ public:
      */
     std::map<std::string, nlohmann::json> getAttributes(
         const spatial::core::SpatialItem* item) override;
+
+    /**
+     * @brief 获取对象的材质信息
+     *
+     * Shapefile通常不包含材质信息，返回默认材质
+     *
+     * @param item Shapefile空间对象
+     * @return 默认材质信息
+     */
+    std::shared_ptr<common::MaterialInfo> getMaterial(
+        const spatial::core::SpatialItem* item) override;
 };
 
 } // namespace shapefile

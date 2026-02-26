@@ -23,6 +23,13 @@
 #include <string>
 #include <optional>
 #include <filesystem>
+#include <unordered_map>
+
+// Forward declaration for tinygltf
+namespace tinygltf {
+    class Model;
+    class Buffer;
+}
 
 namespace b3dm {
 
@@ -114,7 +121,30 @@ public:
 private:
     B3DMGeneratorConfig config_;
 
-    // 从空间对象提取并合并几何体
+    // 纹理类型枚举（用于材质处理）
+    enum class TextureType {
+        BASE_COLOR,
+        NORMAL,
+        EMISSIVE,
+        METALLIC_ROUGHNESS,
+        OCCLUSION
+    };
+
+    // 材质缓存（用于去重）
+    std::unordered_map<std::string, int> materialCache_;
+
+    // 按材质分组的几何体信息
+    struct MaterialGroup {
+        std::shared_ptr<common::MaterialInfo> materialInfo;
+        osg::ref_ptr<osg::Geometry> geometry;
+    };
+
+    // 从空间对象提取并按材质分组合并几何体
+    std::vector<MaterialGroup> extractAndMergeGeometriesByMaterial(
+        const spatial::core::SpatialItemRefList& items
+    );
+
+    // 从空间对象提取并合并几何体（已废弃，使用 extractAndMergeGeometriesByMaterial）
     osg::ref_ptr<osg::Geometry> extractAndMergeGeometries(
         const spatial::core::SpatialItemRefList& items
     );
@@ -125,13 +155,46 @@ private:
         const SimplificationParams& params
     );
 
-    // 构建GLTF模型
+    // 构建GLTF模型（支持材质）
     void buildGLTFModel(
         osg::Geometry* mergedGeom,
         const spatial::core::SpatialItemRefList& items,
         bool enableDraco,
         const DracoCompressionParams& dracoParams,
+        std::vector<unsigned char>& glbData,
+        const std::vector<std::shared_ptr<common::MaterialInfo>>& materials
+    );
+
+    // 构建GLTF模型（支持多材质）
+    void buildGLTFModelMultiMaterial(
+        const std::vector<MaterialGroup>& materialGroups,
+        const spatial::core::SpatialItemRefList& items,
+        bool enableDraco,
+        const DracoCompressionParams& dracoParams,
         std::vector<unsigned char>& glbData
+    );
+
+    // 构建材质（新增）
+    int buildMaterial(
+        const std::shared_ptr<common::MaterialInfo>& matInfo,
+        tinygltf::Model& model,
+        tinygltf::Buffer& buffer
+    );
+
+    // 处理并添加纹理（新增）
+    void processAndAddTexture(
+        osg::Texture* texture,
+        const common::TextureTransformInfo& transform,
+        TextureType type,
+        tinygltf::Model& model,
+        tinygltf::Buffer& buffer,
+        int& textureIndexOut,
+        bool& hasAlphaOut
+    );
+
+    // 计算材质哈希键（用于去重）
+    std::string computeMaterialKey(
+        const std::shared_ptr<common::MaterialInfo>& matInfo
     );
 
     // 构建BatchData

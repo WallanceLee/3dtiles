@@ -43,10 +43,23 @@ public:
     std::string getNodeName() const;
     const osg::Geometry* getGeometry() const;
 
+    /**
+     * @brief 获取材质扩展数据
+     * @return 材质扩展数据指针，如果没有返回nullptr
+     */
+    const MaterialExtensionData* getMaterialExtensionData() const { return materialExtData_; }
+
+    /**
+     * @brief 设置材质扩展数据
+     * @param data 材质扩展数据指针（由外部管理生命周期）
+     */
+    void setMaterialExtensionData(const MaterialExtensionData* data) { materialExtData_ = data; }
+
 private:
     MeshInstanceInfo* meshInfo_;
     int transformIndex_;
     mutable std::optional<osg::BoundingBox> worldBoundsCache_;
+    const MaterialExtensionData* materialExtData_ = nullptr;  // 材质扩展数据（不拥有所有权）
 
     void computeWorldBounds() const;
 };

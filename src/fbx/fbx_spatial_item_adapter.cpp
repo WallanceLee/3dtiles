@@ -107,9 +107,23 @@ FBXSpatialItemList createSpatialItems(FBXLoader* loader) {
     for (auto& pair : loader->meshPool) {
         MeshInstanceInfo& meshInfo = pair.second;
 
+        // 获取该mesh的材质扩展数据（如果有）
+        const MaterialExtensionData* matExtData = nullptr;
+        if (meshInfo.geometry && meshInfo.geometry->getStateSet()) {
+            const osg::StateSet* stateSet = meshInfo.geometry->getStateSet();
+            auto it = loader->stateSetExtensionCache.find(stateSet);
+            if (it != loader->stateSetExtensionCache.end()) {
+                matExtData = &(it->second);
+            }
+        }
+
         // 为每个变换实例创建适配器
         for (int i = 0; i < static_cast<int>(meshInfo.transforms.size()); ++i) {
             auto adapter = std::make_shared<FBXSpatialItemAdapter>(&meshInfo, i);
+            // 设置材质扩展数据（所有实例共享相同的材质）
+            if (matExtData) {
+                adapter->setMaterialExtensionData(matExtData);
+            }
             items.push_back(adapter);
         }
     }

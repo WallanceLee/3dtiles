@@ -53,4 +53,10 @@ std::map<std::string, nlohmann::json> GeometryExtractor::getAttributes(
     return shapefileItem->properties;
 }
 
+std::shared_ptr<common::MaterialInfo> GeometryExtractor::getMaterial(
+    const spatial::core::SpatialItem* item) {
+    // Shapefile不包含材质信息，返回默认材质
+    return std::make_shared<common::MaterialInfo>();
+}
+
 } // namespace shapefile
