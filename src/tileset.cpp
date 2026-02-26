@@ -151,8 +151,6 @@ wkt_convert(char* wkt, double* val, char* path) {
     if (is_geoid_initialized()) {
         double geoid_height = get_geoid_height(lat, lon);
         final_height = orthometric_to_ellipsoidal(lat, lon, height);
-        fprintf(stderr, "[GeoTransform] Geoid correction applied: orthometric=%.3f + geoid=%.3f = ellipsoidal=%.3f\n",
-                height, geoid_height, final_height);
     }
 
     // 创建地理参考

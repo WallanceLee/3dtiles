@@ -197,9 +197,6 @@ double CoordinateTransformer::ApplyGeoidCorrection(double lat, double lon, doubl
     double corrected = GeoidHeight::GetGlobalGeoidCalculator()
         .ConvertOrthometricToEllipsoidal(lat, lon, height);
 
-    fprintf(stderr, "[CoordinateTransformer] Geoid correction: orthometric=%.3f -> ellipsoidal=%.3f\n",
-            height, corrected);
-
     return corrected;
 }
 
