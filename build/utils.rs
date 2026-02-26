@@ -54,30 +54,24 @@ pub fn create_vcpkg_symlink(config: &BuildConfig) -> io::Result<()> {
     #[cfg(target_family = "unix")]
     {
         std::os::unix::fs::symlink(&root_vcpkg, &build_vcpkg).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "Failed to create symlink for Unix-like os from {} -> {}: {}",
-                    root_vcpkg.display(),
-                    build_vcpkg.display(),
-                    e
-                ),
-            )
+            io::Error::other(format!(
+                "Failed to create symlink for Unix-like os from {} -> {}: {}",
+                root_vcpkg.display(),
+                build_vcpkg.display(),
+                e
+            ))
         })?;
     }
 
     #[cfg(target_family = "windows")]
     {
         std::os::windows::fs::symlink_dir(&root_vcpkg, &build_vcpkg).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "Failed to create symlink for windows os from {} -> {}: {}",
-                    root_vcpkg.display(),
-                    build_vcpkg.display(),
-                    e
-                ),
-            )
+            io::Error::other(format!(
+                "Failed to create symlink for windows os from {} -> {}: {}",
+                root_vcpkg.display(),
+                build_vcpkg.display(),
+                e
+            ))
         })?;
     }
 
