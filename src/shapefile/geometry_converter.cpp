@@ -2,6 +2,7 @@
 #include "../coords/coordinate_transformer.h"
 #include "../extern.h"
 
+#include <numbers>
 #include <osg/Array>
 #include <osg/PrimitiveSet>
 #include <osgUtil/DelaunayTriangulator>
@@ -22,7 +23,7 @@ void GeometryConverter::transformToWGS84(double& x, double& y, double& z) {
 std::pair<double, double> GeometryConverter::projectToLocalMeters(double lon, double lat) {
     // 使用与原有代码相同的投影逻辑
     // 将WGS84经纬度转换为以centerLon_/centerLat_为中心的本地米坐标
-    double x = (lon - centerLon_) * 111320.0 * std::cos(centerLat_ * M_PI / 180.0);
+    double x = (lon - centerLon_) * 111320.0 * std::cos(centerLat_ * std::numbers::pi / 180.0);
     double y = (lat - centerLat_) * 111320.0;
     return {x, y};
 }
