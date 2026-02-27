@@ -9,6 +9,7 @@
 #include <fstream>
 #include <algorithm>
 #include <limits>
+#include <numbers>
 
 namespace shapefile {
 
@@ -427,7 +428,7 @@ bool ShapefileProcessor::generateLeafTileset(const TileMeta& meta) {
     double centerZ = (meta.bbox.minHeight + meta.bbox.maxHeight) / 2.0;
 
     // 将 WGS84 包围盒转换为 ENU 米
-    double spanX = (meta.bbox.maxx - meta.bbox.minx) * M_PI / 180.0 * 6378137.0 * std::cos(centerY * M_PI / 180.0);
+    double spanX = (meta.bbox.maxx - meta.bbox.minx) * M_PI / 180.0 * 6378137.0 * std::cos(centerY * std::numbers::pi / 180.0);
     double spanY = (meta.bbox.maxy - meta.bbox.miny) * M_PI / 180.0 * 6378137.0;
     double spanZ = meta.bbox.maxHeight - meta.bbox.minHeight;
 

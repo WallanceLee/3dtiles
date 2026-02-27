@@ -2,6 +2,7 @@
 #include "extern.h"
 #include <iostream>
 
+#include <numbers>
 #include <osg/Array>
 #include <osg/BlendFunc>
 #include <osg/CullFace>
@@ -506,7 +507,7 @@ osg::StateSet* FBXLoader::getOrCreateStateSet(const ufbx_material* mat) {
         result.scale[1] = static_cast<float>(t.scale.y);
 
         ufbx_vec3 euler = ufbx_quat_to_euler(t.rotation, UFBX_ROTATION_ORDER_XYZ);
-        result.rotation = static_cast<float>(euler.z * M_PI / 180.0);
+        result.rotation = static_cast<float>(euler.z * std::numbers::pi / 180.0);
 
         return result;
     };
