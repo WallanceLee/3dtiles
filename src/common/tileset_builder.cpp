@@ -4,11 +4,16 @@
  */
 
 #include "tileset_builder.h"
-#include <extern.h>  // for degree2rad, longti_to_meter, lati_to_meter
+#include "../coords/geo_math.h"
 #include <algorithm>
 #include <cmath>
 
 namespace common {
+
+// 使用 coords 命名空间的数学函数
+using coords::degree2rad;
+using coords::lati_to_meter;
+using coords::longti_to_meter;
 
 // ============================================================================
 // TilesetBuilder 基类实现

@@ -1,5 +1,5 @@
 #include "shapefile_data_pool.h"
-#include "../extern.h"
+#include "../utils/log.h"
 #include <ogrsf_frmts.h>
 #include <osg/Geometry>
 #include <algorithm>

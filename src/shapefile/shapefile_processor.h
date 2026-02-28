@@ -2,13 +2,13 @@
 
 /**
  * @file shapefile_processor.h
- * @brief Shapefile 处理器 - 阶段4完整实现
+ * @brief Shapefile 处理器 - 步骤3修改：支持外部 TilesetBuilder
  *
- * 整合所有新框架组件：
- * - ShapefileDataPool (数据加载)
- * - QuadtreeStrategy (空间索引)
- * - B3DMContentGenerator (B3DM生成)
- * - ShapefileTilesetAdapter (Tileset生成)
+ * 修改内容：
+ * - 步骤1：添加 SetDataSource 方法，允许外部注入数据源
+ * - 步骤2：添加 SetSpatialIndex 方法，允许外部注入空间索引
+ * - 步骤3：添加 SetTilesetBuilder 方法，允许外部注入 TilesetBuilder
+ * - 保持原有接口不变，确保向后兼容
  */
 
 #include "shapefile_data_pool.h"
@@ -22,6 +22,13 @@
 #include <unordered_map>
 #include <memory>
 #include <optional>
+
+// 前向声明 - 避免循环依赖
+namespace pipeline {
+class DataSource;
+class ISpatialIndex;
+class ITilesetBuilder;
+}
 
 namespace shapefile {
 
@@ -80,12 +87,36 @@ struct ProcessingResult {
 /**
  * @brief Shapefile 处理器
  *
- * 阶段4完整实现：完全使用新框架
+ * 步骤3修改：支持外部数据源、空间索引和 TilesetBuilder
  */
 class ShapefileProcessor {
 public:
     explicit ShapefileProcessor(const ShapefileProcessorConfig& config);
     ~ShapefileProcessor();
+
+    /**
+     * @brief 设置外部数据源（步骤1新增）
+     * @param dataSource 外部数据源，如果为 nullptr 则内部加载
+     *
+     * 注意：外部数据源的生命周期必须超过 ShapefileProcessor 的生命周期
+     */
+    void SetDataSource(pipeline::DataSource* dataSource);
+
+    /**
+     * @brief 设置外部空间索引（步骤2新增）
+     * @param spatialIndex 外部空间索引，如果为 nullptr 则内部构建
+     *
+     * 注意：外部空间索引的生命周期必须超过 ShapefileProcessor 的生命周期
+     */
+    void SetSpatialIndex(pipeline::ISpatialIndex* spatialIndex);
+
+    /**
+     * @brief 设置外部 TilesetBuilder（步骤3新增）
+     * @param tilesetBuilder 外部 TilesetBuilder，如果为 nullptr 则内部创建
+     *
+     * 注意：外部 TilesetBuilder 的生命周期必须超过 ShapefileProcessor 的生命周期
+     */
+    void SetTilesetBuilder(pipeline::ITilesetBuilder* tilesetBuilder);
 
     /**
      * @brief 处理 Shapefile 生成 3D Tiles
@@ -96,11 +127,29 @@ public:
 private:
     ShapefileProcessorConfig config_;
 
-    // 数据池
+    // 数据池（内部加载时使用 - 向后兼容）
     std::unique_ptr<ShapefileDataPool> dataPool_;
 
-    // 四叉树索引
+    // 数据源（内部创建时使用）
+    std::unique_ptr<pipeline::DataSource> dataSource_;
+
+    // 外部数据源（步骤1新增）
+    pipeline::DataSource* externalDataSource_ = nullptr;
+
+    // 四叉树索引（内部构建时使用 - 向后兼容）
     std::unique_ptr<spatial::core::SpatialIndex> quadtreeIndex_;
+
+    // 空间索引（内部创建时使用）
+    std::unique_ptr<pipeline::ISpatialIndex> spatialIndex_;
+
+    // 外部空间索引（步骤2新增）
+    pipeline::ISpatialIndex* externalSpatialIndex_ = nullptr;
+
+    // TilesetBuilder（内部创建时使用）
+    std::unique_ptr<pipeline::ITilesetBuilder> tilesetBuilder_;
+
+    // 外部 TilesetBuilder（步骤3新增）
+    pipeline::ITilesetBuilder* externalTilesetBuilder_ = nullptr;
 
     // B3DM 生成器 (前向声明，避免头文件依赖)
     class B3DMGeneratorImpl;
@@ -157,6 +206,21 @@ private:
 
     // 为叶子节点生成 LOD tileset
     bool generateLeafTileset(const TileMeta& meta);
+
+    // 获取当前使用的数据源（步骤1新增）
+    [[nodiscard]] const ShapefileDataPool* GetCurrentDataPool() const;
+
+    // 获取当前使用的数据源（新接口，步骤1补充）
+    [[nodiscard]] pipeline::DataSource* GetCurrentDataSource();
+
+    // 获取当前使用的空间索引根节点（步骤2新增）
+    [[nodiscard]] const spatial::core::SpatialIndexNode* GetCurrentRootNode() const;
+
+    // 获取当前使用的空间索引（新接口，步骤2补充）
+    [[nodiscard]] pipeline::ISpatialIndex* GetCurrentSpatialIndex();
+
+    // 获取当前使用的 TilesetBuilder（步骤3新增）
+    [[nodiscard]] pipeline::ITilesetBuilder* GetCurrentTilesetBuilder();
 };
 
 } // namespace shapefile

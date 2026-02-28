@@ -28,8 +28,10 @@
 #define TINYGLTF_IMPLEMENTATION
 #include <tiny_gltf.h>
 #include <nlohmann/json.hpp>
-#include "extern.h"
-#include "./coords/coordinate_transformer.h"
+#include "utils/log.h"
+#include "utils/file_utils.h"
+#include "extern.h"  // for GetGlobalTransformer
+#include "coords/coordinate_transformer.h"
 #include "b3dm/b3dm_writer.h"
 #include "tileset/bounding_volume.h"
 #include "tileset/tileset_writer.h"
@@ -1260,7 +1262,7 @@ void do_tile_job(osg_tree& tree, std::string out_path, int max_lvl, bool enable_
         out_file += "/";
         out_file += replace(get_file_name(tree.file_name), ".osgb", tree.type != 2 ? ".b3dm" : "o.b3dm");
         if (!b3dm_buf.empty()) {
-            write_file(out_file.c_str(), b3dm_buf.data(), b3dm_buf.size());
+            utils::write_file(out_file.c_str(), b3dm_buf.data(), b3dm_buf.size());
         }
         // test
         // std::string glb_buf;
@@ -1464,7 +1466,7 @@ osgb2glb(const char* in, const char* out)
         return false;
     }
 
-    ret = write_file(out, glb_buf.data(), (unsigned long)glb_buf.size());
+    ret = utils::write_file(out, glb_buf.data(), (unsigned long)glb_buf.size());
     if (!ret)
     {
         LOG_E("write glb file failed");

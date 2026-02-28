@@ -4,7 +4,13 @@
 #include "shapefile_tileset_adapter.h"
 #include "../tileset/tileset_writer.h"
 #include "../lod_pipeline.h"
-#include "../extern.h"
+#include "../utils/log.h"
+#include "../utils/file_utils.h"
+#include "../pipeline/adapters/shapefile/shapefile_data_source.h"
+#include "../pipeline/adapters/spatial/quadtree_index.h"
+#include "../pipeline/data_source.h"
+#include "../pipeline/spatial_index.h"
+#include "../pipeline/tileset_builder.h"
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -84,7 +90,142 @@ ProcessingResult ShapefileProcessor::process() {
     return result;
 }
 
+void ShapefileProcessor::SetDataSource(pipeline::DataSource* dataSource) {
+    externalDataSource_ = dataSource;
+}
+
+void ShapefileProcessor::SetSpatialIndex(pipeline::ISpatialIndex* spatialIndex) {
+    externalSpatialIndex_ = spatialIndex;
+}
+
+void ShapefileProcessor::SetTilesetBuilder(pipeline::ITilesetBuilder* tilesetBuilder) {
+    externalTilesetBuilder_ = tilesetBuilder;
+}
+
+pipeline::ITilesetBuilder* ShapefileProcessor::GetCurrentTilesetBuilder() {
+    if (externalTilesetBuilder_) {
+        return externalTilesetBuilder_;
+    }
+    // 如果内部 TilesetBuilder 未创建，则创建它
+    if (!tilesetBuilder_) {
+        // 使用工厂创建 Shapefile TilesetBuilder
+        tilesetBuilder_ = pipeline::TilesetBuilderFactory::Instance().Create("shapefile");
+        if (tilesetBuilder_) {
+            pipeline::TilesetBuilderConfig tbConfig;
+            tbConfig.center_longitude = config_.centerLongitude;
+            tbConfig.center_latitude = config_.centerLatitude;
+            tbConfig.bounding_volume_scale = config_.boundingVolumeScaleFactor;
+            tbConfig.child_geometric_error_multiplier = config_.geometricErrorScale;
+            tbConfig.enable_lod = config_.enableLOD;
+            tilesetBuilder_->Initialize(tbConfig);
+        }
+    }
+    return tilesetBuilder_.get();
+}
+
+const ShapefileDataPool* ShapefileProcessor::GetCurrentDataPool() const {
+    if (externalDataSource_) {
+        // 从外部数据源获取数据池
+        auto* shapefileSource = dynamic_cast<const pipeline::adapters::shapefile::ShapefileDataSource*>(externalDataSource_);
+        if (shapefileSource) {
+            return shapefileSource->GetDataPool();
+        }
+    }
+    // 如果内部数据源已创建，尝试从中获取数据池
+    if (dataSource_) {
+        auto* shapefileSource = dynamic_cast<pipeline::adapters::shapefile::ShapefileDataSource*>(dataSource_.get());
+        if (shapefileSource) {
+            return shapefileSource->GetDataPool();
+        }
+    }
+    return dataPool_.get();
+}
+
+pipeline::DataSource* ShapefileProcessor::GetCurrentDataSource() {
+    if (externalDataSource_) {
+        return externalDataSource_;
+    }
+    // 如果内部数据源未创建，则使用工厂创建
+    if (!dataSource_) {
+        dataSource_ = pipeline::DataSourceFactory::Instance().Create("shapefile");
+        if (dataSource_) {
+            LOG_I("Stage4: Created ShapefileDataSource using factory");
+        }
+    }
+    return dataSource_.get();
+}
+
+const spatial::core::SpatialIndexNode* ShapefileProcessor::GetCurrentRootNode() const {
+    if (externalSpatialIndex_) {
+        // 从外部空间索引获取根节点
+        auto* rawNode = externalSpatialIndex_->GetRootNode();
+        if (rawNode) {
+            // 需要适配器转换
+            // 暂时返回 nullptr，实际使用时需要正确处理
+            return nullptr;
+        }
+    }
+    if (spatialIndex_) {
+        // 从内部空间索引获取根节点
+        auto* rawNode = spatialIndex_->GetRootNode();
+        if (rawNode) {
+            // 需要适配器转换
+            return nullptr;
+        }
+    }
+    if (quadtreeIndex_) {
+        return quadtreeIndex_->getRootNode();
+    }
+    return nullptr;
+}
+
+pipeline::ISpatialIndex* ShapefileProcessor::GetCurrentSpatialIndex() {
+    if (externalSpatialIndex_) {
+        return externalSpatialIndex_;
+    }
+    // 如果内部空间索引未创建，则使用工厂创建
+    if (!spatialIndex_) {
+        spatialIndex_ = pipeline::SpatialIndexFactory::Instance().Create("quadtree");
+        if (spatialIndex_) {
+            LOG_I("Stage4: Created QuadtreeIndex using factory");
+        }
+    }
+    return spatialIndex_.get();
+}
+
 bool ShapefileProcessor::loadData() {
+    // 步骤1修改：如果提供了外部数据源，先加载外部数据源获取地理参考
+    if (externalDataSource_) {
+        LOG_I("Stage4: Using external data source");
+
+        // 检查外部数据源是否已加载
+        if (!externalDataSource_->IsLoaded()) {
+            pipeline::DataSourceConfig dsConfig;
+            dsConfig.input_path = config_.inputPath;
+            dsConfig.output_path = config_.outputPath;
+            dsConfig.height_field = config_.heightField;
+            dsConfig.center_longitude = config_.centerLongitude;
+            dsConfig.center_latitude = config_.centerLatitude;
+
+            if (!externalDataSource_->Load(dsConfig)) {
+                LOG_E("Stage4: Failed to load external data source");
+                return false;
+            }
+        }
+
+        // 从外部数据源获取地理参考
+        auto [lon, lat, height] = externalDataSource_->GetGeoReference();
+        if (lon != 0.0 || lat != 0.0) {
+            config_.centerLongitude = lon;
+            config_.centerLatitude = lat;
+        }
+
+        LOG_I("Stage4: External data source loaded with %zu items",
+              externalDataSource_->GetItemCount());
+        // 继续执行下面的数据池加载逻辑
+    }
+
+    // 原有逻辑：内部加载数据（无论是否使用外部数据源，都需要加载数据池）
     dataPool_ = std::make_unique<ShapefileDataPool>();
     // 使用带几何数据加载的方法，传入中心点坐标用于ENU转换
     // 注意：这里传入的中心点可能是投影坐标，需要在加载后重新计算

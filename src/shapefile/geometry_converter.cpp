@@ -1,6 +1,6 @@
 #include "geometry_converter.h"
 #include "../coords/coordinate_transformer.h"
-#include "../extern.h"
+#include "../utils/log.h"
 
 #include <numbers>
 #include <osg/Array>

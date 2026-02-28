@@ -1,4 +1,4 @@
-#include "fbx.h"
+#include "fbx/core/fbx.h"
 #include "extern.h"
 #include <iostream>
 

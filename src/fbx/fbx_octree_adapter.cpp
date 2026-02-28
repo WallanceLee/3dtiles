@@ -1,6 +1,6 @@
 #include "fbx_octree_adapter.h"
 #include "fbx_spatial_item_adapter.h"
-#include "../fbx.h"
+#include "fbx/core/fbx.h"
 #include <osg/Geometry>
 
 namespace fbx {

@@ -1,6 +1,10 @@
-#include "FBXPipeline.h"
-#include "extern.h"
+#include "fbx/fbx_processor.h"
+#include "utils/log.h"
+#include "utils/file_utils.h"
 #include "./coords/coordinate_transformer.h"
+#include "pipeline/conversion_pipeline.h"
+#include "pipeline/fbx_pipeline.h"
+#include "pipeline/adapters/fbx/fbx_data_source.h"
 #include <osg/MatrixTransform>
 #include <osg/Geode>
 #include <osg/Material>
@@ -43,9 +47,124 @@ bool isPointInBox(const osg::Vec3d& p, const osg::BoundingBox& b) {
 FBXPipeline::FBXPipeline(const PipelineSettings& s) : settings(s) {
 }
 
-void FBXPipeline::run() {
-    LOG_I("Starting FBXPipeline (Stage 1)...");
+void FBXPipeline::SetDataSource(pipeline::DataSource* dataSource) {
+    externalDataSource_ = dataSource;
+}
 
+void FBXPipeline::SetSpatialIndex(pipeline::ISpatialIndex* spatialIndex) {
+    externalSpatialIndex_ = spatialIndex;
+}
+
+void FBXPipeline::SetTilesetBuilder(pipeline::ITilesetBuilder* tilesetBuilder) {
+    externalTilesetBuilder_ = tilesetBuilder;
+}
+
+pipeline::ITilesetBuilder* FBXPipeline::GetCurrentTilesetBuilder() {
+    if (externalTilesetBuilder_) {
+        return externalTilesetBuilder_;
+    }
+    // 如果内部 TilesetBuilder 未创建，则创建它
+    if (!tilesetBuilder_) {
+        // 使用工厂创建 FBX TilesetBuilder
+        tilesetBuilder_ = pipeline::TilesetBuilderFactory::Instance().Create("fbx");
+        if (tilesetBuilder_) {
+            pipeline::TilesetBuilderConfig tbConfig;
+            tbConfig.center_longitude = settings.longitude;
+            tbConfig.center_latitude = settings.latitude;
+            tbConfig.center_height = settings.height;
+            tbConfig.bounding_volume_scale = 1.0;
+            tbConfig.child_geometric_error_multiplier = settings.geScale;
+            tbConfig.enable_lod = settings.enableLOD;
+            tilesetBuilder_->Initialize(tbConfig);
+        }
+    }
+    return tilesetBuilder_.get();
+}
+
+pipeline::DataSource* FBXPipeline::GetCurrentDataSource() {
+    if (externalDataSource_) {
+        return externalDataSource_;
+    }
+    // 如果内部数据源未创建，则使用工厂创建
+    if (!dataSource_) {
+        dataSource_ = pipeline::DataSourceFactory::Instance().Create("fbx");
+        if (dataSource_) {
+            LOG_I("FBXPipeline: Created FBXDataSource using factory");
+        }
+    }
+    return dataSource_.get();
+}
+
+pipeline::ISpatialIndex* FBXPipeline::GetCurrentSpatialIndex() {
+    if (externalSpatialIndex_) {
+        return externalSpatialIndex_;
+    }
+    // 如果内部空间索引未创建，则使用工厂创建
+    if (!spatialIndex_) {
+        spatialIndex_ = pipeline::SpatialIndexFactory::Instance().Create("octree");
+        if (spatialIndex_) {
+            LOG_I("FBXPipeline: Created OctreeIndex using factory");
+        }
+    }
+    return spatialIndex_.get();
+}
+
+const spatial::strategy::OctreeNode* FBXPipeline::GetCurrentRootNode() const {
+    if (externalSpatialIndex_) {
+        // 从外部空间索引获取根节点
+        auto* rawNode = externalSpatialIndex_->GetRootNode();
+        if (rawNode) {
+            // 需要适配器转换
+            // 暂时返回 nullptr，实际使用时需要正确处理
+            return nullptr;
+        }
+    }
+    if (spatialIndex_) {
+        // 从内部空间索引获取根节点
+        auto* rawNode = spatialIndex_->GetRootNode();
+        if (rawNode) {
+            // 需要适配器转换
+            return nullptr;
+        }
+    }
+    // 原有逻辑返回内部构建的根节点
+    return nullptr;
+}
+
+bool FBXPipeline::loadData() {
+    // 步骤1修改：如果提供了外部数据源，直接使用其空间项
+    if (externalDataSource_) {
+        LOG_I("FBXPipeline: Using external data source");
+
+        // 检查外部数据源是否已加载
+        if (!externalDataSource_->IsLoaded()) {
+            pipeline::DataSourceConfig dsConfig;
+            dsConfig.input_path = settings.inputPath;
+            dsConfig.output_path = settings.outputPath;
+            dsConfig.center_longitude = settings.longitude;
+            dsConfig.center_latitude = settings.latitude;
+            dsConfig.center_height = settings.height;
+
+            if (!externalDataSource_->Load(dsConfig)) {
+                LOG_E("FBXPipeline: Failed to load external data source");
+                return false;
+            }
+        }
+
+        // 从外部数据源获取空间项
+        auto* fbxSource = dynamic_cast<pipeline::adapters::fbx::FBXDataSource*>(externalDataSource_);
+        if (fbxSource) {
+            spatialItems_ = fbxSource->GetFBXSpatialItems();
+            // 注意：不要获取外部数据源的 loader，避免双重释放
+            // 我们自己加载 loader
+        }
+
+        LOG_I("FBXPipeline: External data source loaded with %zu items",
+              spatialItems_.size());
+        // 继续执行下面的 loader 加载逻辑
+    }
+
+    // 原有逻辑：内部加载数据（无论是否使用外部数据源，都需要加载 loader）
     loader_ = std::make_unique<FBXLoader>(settings.inputPath);
     loader_->load();
     LOG_I("FBX Loaded. Mesh Pool Size: %zu", loader_->meshPool.size());
@@ -54,6 +173,18 @@ void FBXPipeline::run() {
     LOG_I("Creating Spatial Items...");
     spatialItems_ = fbx::createSpatialItems(loader_.get());
     LOG_I("Created %zu spatial items.", spatialItems_.size());
+
+    return !spatialItems_.empty();
+}
+
+void FBXPipeline::run() {
+    LOG_I("Starting FBXPipeline (Stage 1)...");
+
+    // 步骤1修改：使用 loadData 方法加载数据
+    if (!loadData()) {
+        LOG_E("FBXPipeline: Failed to load data");
+        return;
+    }
 
     // Lambda to generate LOD settings chain
     auto generateLODChain = [&](const PipelineSettings& cfg) -> LODPipelineSettings {
@@ -334,28 +465,39 @@ extern "C" void* fbx23dtile(
     double height,
     bool enable_lod
 ) {
-    std::string input(in_path);
-    std::string output(out_path);
+    std::cout << "[fbx23dtile] Using unified pipeline" << std::endl;
 
-    PipelineSettings settings;
-    settings.inputPath = input;
-    settings.outputPath = output;
-    settings.maxDepth = max_lvl > 0 ? max_lvl : 5;
-    settings.enableTextureCompress = enable_texture_compress;
-    settings.enableDraco = enable_draco;
-    settings.enableSimplify = enable_meshopt;
-    settings.enableLOD = enable_lod;
-    settings.enableUnlit = enable_unlit;
-    settings.longitude = longitude;
-    settings.latitude = latitude;
-    settings.height = height;
+    // 构建 ConversionParams
+    pipeline::ConversionParams params;
+    params.input_path = in_path;
+    params.output_path = out_path;
+    params.source_type = "fbx";
+    params.longitude = longitude;
+    params.latitude = latitude;
+    params.height = height;
+    params.enable_lod = enable_lod;
+    params.enable_simplify = enable_meshopt;
+    params.enable_draco = enable_draco;
+    params.enable_texture_compress = enable_texture_compress;
+    params.enable_unlit = enable_unlit;
 
-    FBXPipeline pipeline(settings);
-    pipeline.run();
+    // 创建管道并执行转换
+    auto pipeline = pipeline::PipelineFactory::Instance().Create("fbx");
+    if (!pipeline) {
+        std::cerr << "[fbx23dtile] Failed to create pipeline" << std::endl;
+        return nullptr;
+    }
 
-    fs::path tilesetPath = fs::path(output) / "tileset.json";
+    auto result = pipeline->Convert(params);
+    if (!result.success) {
+        std::cerr << "[fbx23dtile] Conversion failed" << std::endl;
+        return nullptr;
+    }
+
+    // 读取 tileset.json 返回给 Rust
+    fs::path tilesetPath = fs::path(out_path) / "tileset.json";
     if (!fs::exists(tilesetPath)) {
-        LOG_E("Failed to generate tileset.json at %s", tilesetPath.string().c_str());
+        std::cerr << "[fbx23dtile] tileset.json not found" << std::endl;
         return nullptr;
     }
 
@@ -383,7 +525,7 @@ extern "C" void* fbx23dtile(
             memcpy(box_ptr + 3, min, 3 * sizeof(double));
         }
     } catch (const std::exception& e) {
-        LOG_E("Failed to parse tileset.json: %s", e.what());
+        std::cerr << "[fbx23dtile] Failed to parse tileset.json: " << e.what() << std::endl;
     }
 
     void* str = malloc(jsonStr.length() + 1);

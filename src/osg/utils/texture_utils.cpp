@@ -1,5 +1,5 @@
 #include "texture_utils.h"
-#include "../../extern.h"
+#include "../../utils/log.h"
 #include "../../common/mesh_processor.h"
 
 #include <osgDB/Registry>

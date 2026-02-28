@@ -21,8 +21,7 @@
 #include "../tileset/bounding_volume.h"
 #include "../tileset/transform.h"
 #include "../coords/coordinate_transformer.h"
-
-#include <extern.h>  // for degree2rad, longti_to_meter, lati_to_meter
+#include "../coords/geo_math.h"
 
 #include <glm/glm.hpp>
 #include <unordered_map>
@@ -30,6 +29,11 @@
 #include <filesystem>
 
 namespace shapefile {
+
+// 使用 coords 命名空间的数学函数
+using coords::degree2rad;
+using coords::lati_to_meter;
+using coords::longti_to_meter;
 
 /**
  * @brief 适配器配置选项

@@ -1,5 +1,5 @@
 #include "gltf_builder.h"
-#include "../extern.h"
+#include "../utils/log.h"
 
 #include <osg/Geometry>
 #include <osg/StateSet>

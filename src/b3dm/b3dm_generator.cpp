@@ -1,5 +1,5 @@
 #include "b3dm_generator.h"
-#include "../extern.h"
+#include "../utils/log.h"
 #include "../gltf/extension_manager.h"
 #include "../gltf/material_builder.h"
 

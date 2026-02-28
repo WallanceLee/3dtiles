@@ -8,5 +8,4 @@
 .DS_Store
 
 data
-output
 compile_commands.json

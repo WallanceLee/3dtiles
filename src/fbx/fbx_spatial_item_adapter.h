@@ -9,7 +9,7 @@
 
 #include "../spatial/core/spatial_item.h"
 #include "../spatial/core/spatial_bounds.h"
-#include "../fbx.h"
+#include "fbx/core/fbx.h"
 #include <osg/BoundingBox>
 #include <osg/Matrixd>
 #include <memory>

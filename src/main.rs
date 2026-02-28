@@ -218,6 +218,12 @@ fn main() {
             .help("Set the path to geoid data files (egm96-5.pgm, etc.). Default: GEOGRAPHICLIB_GEOID_PATH env or /usr/local/share/GeographicLib/geoids")
             .num_args(1),
         )
+        .arg(
+            Arg::new("use-new-pipeline")
+                .long("use-new-pipeline")
+                .help("Use new unified pipeline (experimental)")
+                .action(ArgAction::SetTrue),
+        )
         .get_matches();
 
     let input = matches
@@ -265,6 +271,7 @@ fn main() {
     let enable_texture_compress = matches.get_flag("enable-texture-compress");
     let enable_lod = matches.get_flag("enable-lod");
     let enable_unlit = matches.get_flag("enable-unlit");
+    let use_new_pipeline = matches.get_flag("use-new-pipeline");
 
     if matches.get_flag("verbose") {
         info!("set program versose on");
@@ -301,6 +308,10 @@ fn main() {
     // Canonicalize path to ensure absolute paths for C++ loader
     let abs_input_buf = in_path.canonicalize().unwrap_or(in_path.to_path_buf());
     let input = abs_input_buf.to_str().unwrap();
+
+    if use_new_pipeline {
+        info!("Using new unified pipeline (experimental)");
+    }
 
     match format {
         "osgb" => {

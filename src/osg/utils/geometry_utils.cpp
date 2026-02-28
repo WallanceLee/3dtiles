@@ -1,5 +1,5 @@
 #include "geometry_utils.h"
-#include "../../extern.h"
+#include "../../utils/log.h"
 
 #include <osg/Vec2>
 #include <osg/Vec3>

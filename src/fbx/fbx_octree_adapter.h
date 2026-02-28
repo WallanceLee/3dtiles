@@ -2,7 +2,7 @@
 
 #include "../spatial/strategy/octree_strategy.h"
 #include "fbx_spatial_item_adapter.h"
-#include "../fbx.h"
+#include "fbx/core/fbx.h"
 #include <osg/BoundingBox>
 #include <vector>
 #include <memory>

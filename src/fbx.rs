@@ -3,7 +3,6 @@ use std::{error::Error, fs};
 use crate::common::str_to_vec_c;
 
 extern "C" {
-
     fn fbx23dtile(
         in_path: *const u8,
         out_path: *const u8,

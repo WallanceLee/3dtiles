@@ -9,6 +9,8 @@
 #include <ogr_spatialref.h>
 #include <ogrsf_frmts.h>
 
+#include "utils/log.h"
+#include "utils/file_utils.h"
 #include "extern.h"
 #include "coords/coordinate_transformer.h"
 #include <glm/gtc/type_ptr.hpp>
@@ -283,7 +285,7 @@ write_tileset_box(Transform* trans, Box& box, double geometricError,
 
     json_txt += last_buf;
 
-    bool ret = write_file(json_file, json_txt.data(), (unsigned long)json_txt.size());
+    bool ret = utils::write_file(json_file, json_txt.data(), (unsigned long)json_txt.size());
     if (!ret) {
         LOG_E("write file %s fail", json_file);
     }
@@ -336,7 +338,7 @@ bool write_tileset_region(
 
     json_txt += last_buf;
 
-    bool ret = write_file(json_file, json_txt.data(), (unsigned long)json_txt.size());
+    bool ret = utils::write_file(json_file, json_txt.data(), (unsigned long)json_txt.size());
     if (!ret) {
         LOG_E("write file %s fail", json_file);
     }
@@ -430,7 +432,7 @@ write_tileset(double radian_x, double radian_y,
 
     json_txt += last_buf;
 
-    bool ret = write_file(full_path, json_txt.data(), (unsigned long)json_txt.size());
+    bool ret = utils::write_file(full_path, json_txt.data(), (unsigned long)json_txt.size());
     if (!ret) {
         LOG_E("write file %s fail", filename);
     }
