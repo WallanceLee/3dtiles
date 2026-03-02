@@ -74,20 +74,30 @@ ConversionResult ShapefilePipeline::Convert(const ConversionParams& params) {
     ReportProgress("initialization", 0.0f);
 
     // 复用 ShapefileProcessor 处理数据（完全复用现有实现）
+    // 使用新的参数结构：options 和 spatial_config
     shapefile::ShapefileProcessorConfig config;
     config.inputPath = params.input_path;
     config.outputPath = params.output_path;
-    config.heightField = params.height_field;
-    config.centerLongitude = params.longitude;
-    config.centerLatitude = params.latitude;
-    config.enableLOD = params.enable_lod;
-    config.enableSimplification = params.enable_simplify;
-    config.enableDraco = params.enable_draco;
+
+    // 从 specific 参数获取 Shapefile 特定配置
+    if (const auto* shp_params = params.GetSpecific<ShapefileParams>()) {
+        config.heightField = shp_params->height_field;
+        // 注意：ShapefileProcessorConfig 没有 layerId 字段，使用默认值 0
+        (void)shp_params->layer_id;  // 避免未使用警告
+    } else {
+        // 向后兼容：使用废弃的字段
+        config.heightField = params.height_field;
+    }
+
+    // 使用通用选项
+    config.enableLOD = params.options.enable_lod;
+    config.enableSimplification = params.options.enable_simplify;
+    config.enableDraco = params.options.enable_draco;
 
     // 设置空间索引配置
-    config.quadtreeConfig.maxDepth = static_cast<size_t>(params.max_depth);
-    config.quadtreeConfig.maxItemsPerNode = params.max_items_per_node;
-    config.quadtreeConfig.minBoundsSize = params.min_bounds_size;
+    config.quadtreeConfig.maxDepth = static_cast<size_t>(params.spatial_config.max_depth);
+    config.quadtreeConfig.maxItemsPerNode = params.spatial_config.max_items_per_node;
+    config.quadtreeConfig.minBoundsSize = params.spatial_config.min_bounds_size;
 
     // 创建处理器
     shapefile::ShapefileProcessor processor(config);
@@ -145,11 +155,17 @@ extern "C" bool shp23dtile(const ShapeConversionParams* params)
     pipelineParams.input_path = params->input_path;
     pipelineParams.output_path = params->output_path;
     pipelineParams.source_type = "shapefile";
-    pipelineParams.height_field = params->height_field ? params->height_field : "";
-    pipelineParams.layer_id = params->layer_id;
-    pipelineParams.enable_lod = params->enable_lod;
-    pipelineParams.enable_simplify = params->simplify_params.enable_simplification;
-    pipelineParams.enable_draco = params->draco_compression_params.enable_compression;
+
+    // 创建 Shapefile 特定参数
+    auto shpSpecific = std::make_unique<pipeline::ShapefileParams>();
+    shpSpecific->height_field = params->height_field ? params->height_field : "";
+    shpSpecific->layer_id = params->layer_id;
+    pipelineParams.specific = std::move(shpSpecific);
+
+    // 设置通用选项
+    pipelineParams.options.enable_lod = params->enable_lod;
+    pipelineParams.options.enable_simplify = params->simplify_params.enable_simplification;
+    pipelineParams.options.enable_draco = params->draco_compression_params.enable_compression;
 
     // 计算中心点
     GDALAllRegister();

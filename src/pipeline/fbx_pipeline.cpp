@@ -72,19 +72,28 @@ ConversionResult FBXPipeline::Convert(const ConversionParams& params) {
     ReportProgress("initialization", 0.0f);
 
     // 复用现有 FBXPipeline 实现（完全复用）
+    // 使用新的参数结构：options 和 spatial_config
     PipelineSettings settings;
     settings.inputPath = params.input_path;
     settings.outputPath = params.output_path;
-    settings.maxDepth = params.max_depth;
-    settings.maxItemsPerTile = static_cast<int>(params.max_items_per_node);
-    settings.enableSimplify = params.enable_simplify;
-    settings.enableDraco = params.enable_draco;
-    settings.enableTextureCompress = params.enable_texture_compress;
-    settings.enableLOD = params.enable_lod;
-    settings.enableUnlit = params.enable_unlit;
-    settings.longitude = params.longitude;
-    settings.latitude = params.latitude;
-    settings.height = params.height;
+    settings.maxDepth = params.spatial_config.max_depth;
+    settings.maxItemsPerTile = static_cast<int>(params.spatial_config.max_items_per_node);
+    settings.enableSimplify = params.options.enable_simplify;
+    settings.enableDraco = params.options.enable_draco;
+    settings.enableTextureCompress = params.options.enable_texture_compress;
+    settings.enableLOD = params.options.enable_lod;
+    settings.enableUnlit = params.options.enable_unlit;
+    // 从 specific 参数获取 FBX 特定配置
+    if (const auto* fbx_params = params.GetSpecific<FBXParams>()) {
+        settings.longitude = fbx_params->longitude;
+        settings.latitude = fbx_params->latitude;
+        settings.height = fbx_params->height;
+    } else {
+        // 向后兼容：使用废弃的字段
+        settings.longitude = params.longitude;
+        settings.latitude = params.latitude;
+        settings.height = params.height;
+    }
     settings.geScale = 0.5;
 
     // 创建并运行管道

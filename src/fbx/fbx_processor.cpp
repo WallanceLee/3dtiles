@@ -472,14 +472,20 @@ extern "C" void* fbx23dtile(
     params.input_path = in_path;
     params.output_path = out_path;
     params.source_type = "fbx";
-    params.longitude = longitude;
-    params.latitude = latitude;
-    params.height = height;
-    params.enable_lod = enable_lod;
-    params.enable_simplify = enable_meshopt;
-    params.enable_draco = enable_draco;
-    params.enable_texture_compress = enable_texture_compress;
-    params.enable_unlit = enable_unlit;
+    
+    // 创建 FBX 特定参数
+    auto fbxSpecific = std::make_unique<pipeline::FBXParams>();
+    fbxSpecific->longitude = longitude;
+    fbxSpecific->latitude = latitude;
+    fbxSpecific->height = height;
+    params.specific = std::move(fbxSpecific);
+    
+    // 设置通用选项
+    params.options.enable_lod = enable_lod;
+    params.options.enable_simplify = enable_meshopt;
+    params.options.enable_draco = enable_draco;
+    params.options.enable_texture_compress = enable_texture_compress;
+    params.options.enable_unlit = enable_unlit;
 
     // 创建管道并执行转换
     auto pipeline = pipeline::PipelineFactory::Instance().Create("fbx");
