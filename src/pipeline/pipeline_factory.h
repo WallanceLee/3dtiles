@@ -132,11 +132,9 @@ private:
 // ============================================
 
 /**
- * @brief 增强的管道工厂
+ * @brief 增强的管道工厂（V2）
  *
  * 支持动态注册、元数据查询和扩展名映射
- *
- * 注意：此类替代 conversion_pipeline.h 中的 OldPipelineFactory
  */
 class PipelineFactoryV2 {
 public:

@@ -66,53 +66,6 @@ using PipelineCreator = std::function<ConversionPipelinePtr()>;
 // 为了保持向后兼容，保留 unique_ptr 版本
 using UniquePipelinePtr = std::unique_ptr<IConversionPipeline>;
 
-// ============================================
-// 向后兼容的工厂类（已废弃）
-// ============================================
-
-/**
- * @deprecated 使用 pipeline_factory.h 中的 PipelineFactory
- *
- * 此类保留用于向后兼容，将在未来版本中移除。
- * 新的代码应使用 pipeline_factory.h 中的增强工厂类。
- */
-class [[deprecated("Use pipeline::PipelineFactory from pipeline_factory.h instead")]]
-OldPipelineFactory {
-public:
-    [[nodiscard]] static auto Instance() noexcept -> OldPipelineFactory&;
-
-    void Register(const std::string& type, PipelineCreator creator);
-    [[nodiscard]] auto Create(const std::string& type) const -> ConversionPipelinePtr;
-    [[nodiscard]] auto IsRegistered(const std::string& type) const noexcept -> bool;
-
-private:
-    OldPipelineFactory() = default;
-    ~OldPipelineFactory() = default;
-
-    std::unordered_map<std::string, PipelineCreator> creators_;
-};
-
-// 为了保持向后兼容，提供类型别名
-using PipelineFactory [[deprecated("Use pipeline::PipelineFactory from pipeline_factory.h")]] = OldPipelineFactory;
-
-// ============================================
-// 向后兼容的注册宏（已废弃）
-// ============================================
-
-/**
- * @deprecated 使用 pipeline_factory.h 中的 REGISTER_PIPELINE 宏
- */
-#define REGISTER_PIPELINE_OLD(TYPE, CLASS)                                     \
-    namespace {                                                                \
-        [[maybe_unused]] const bool _##CLASS##_registered = []() -> bool {     \
-            ::pipeline::OldPipelineFactory::Instance().Register(               \
-                TYPE, []() -> ::pipeline::ConversionPipelinePtr {              \
-                    return std::make_unique<CLASS>();                        \
-                });                                                          \
-            return true;                                                     \
-        }();                                                                 \
-    }
-
 } // namespace pipeline
 
 // ============================================

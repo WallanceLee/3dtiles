@@ -1,4 +1,5 @@
 #include "shapefile_pipeline.h"
+#include "pipeline_factory.h"
 #include "adapters/shapefile/shapefile_data_source.h"
 #include "adapters/spatial/quadtree_index.h"
 #include "adapters/tileset/shapefile_tileset_builder.h"
@@ -12,6 +13,18 @@
 #include <filesystem>
 
 namespace pipeline {
+
+// ============================================================
+// 使用 REGISTER_PIPELINE 宏自动注册到 PipelineFactoryV2
+// ============================================================
+
+REGISTER_PIPELINE(
+    ShapefilePipeline,      // 管道类名
+    ShapefileParams,        // 参数类名
+    "shapefile",            // 类型标识
+    "Shapefile Converter",  // 显示名称
+    ".shp", ".shx", ".dbf"  // 支持的扩展名
+)
 
 // ============================================================
 // ShapefileComponentFactory 实现
@@ -146,9 +159,10 @@ extern "C" bool shp23dtile(const ShapeConversionParams* params)
         GDALClose(poDS);
     }
 
-    // 创建管道并执行转换
-    auto pipeline = pipeline::PipelineFactory::Instance().Create("shapefile");
+    // 创建管道并执行转换（使用 PipelineFactoryV2）
+    auto pipeline = pipeline::PipelineFactoryV2::Instance().Create("shapefile");
     if (!pipeline) {
+        std::cerr << "[shp23dtile] Failed to create shapefile pipeline" << std::endl;
         return false;
     }
 

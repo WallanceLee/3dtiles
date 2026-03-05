@@ -1,4 +1,5 @@
 #include "fbx_pipeline.h"
+#include "pipeline_factory.h"
 #include "adapters/fbx/fbx_data_source.h"
 #include "adapters/spatial/octree_index.h"
 #include "adapters/tileset/fbx_tileset_builder.h"
@@ -10,6 +11,18 @@
 #include <filesystem>
 
 namespace pipeline {
+
+// ============================================================
+// 使用 REGISTER_PIPELINE 宏自动注册到 PipelineFactoryV2
+// ============================================================
+
+REGISTER_PIPELINE(
+    FBXPipeline,            // 管道类名
+    FBXParams,              // 参数类名
+    "fbx",                  // 类型标识
+    "FBX Converter",        // 显示名称
+    ".fbx", ".obj"          // 支持的扩展名（FBX 和 OBJ 格式）
+)
 
 // ============================================================
 // FBXComponentFactory 实现

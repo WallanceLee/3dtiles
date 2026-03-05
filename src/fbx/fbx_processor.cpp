@@ -3,6 +3,7 @@
 #include "utils/file_utils.h"
 #include "./coords/coordinate_transformer.h"
 #include "pipeline/conversion_pipeline.h"
+#include "pipeline/pipeline_factory.h"
 #include "pipeline/fbx_pipeline.h"
 #include "pipeline/adapters/fbx/fbx_data_source.h"
 #include <osg/MatrixTransform>
@@ -472,14 +473,14 @@ extern "C" void* fbx23dtile(
     params.input_path = in_path;
     params.output_path = out_path;
     params.source_type = "fbx";
-    
+
     // 创建 FBX 特定参数
     auto fbxSpecific = std::make_unique<pipeline::FBXParams>();
     fbxSpecific->longitude = longitude;
     fbxSpecific->latitude = latitude;
     fbxSpecific->height = height;
     params.specific = std::move(fbxSpecific);
-    
+
     // 设置通用选项
     params.options.enable_lod = enable_lod;
     params.options.enable_simplify = enable_meshopt;
@@ -487,8 +488,8 @@ extern "C" void* fbx23dtile(
     params.options.enable_texture_compress = enable_texture_compress;
     params.options.enable_unlit = enable_unlit;
 
-    // 创建管道并执行转换
-    auto pipeline = pipeline::PipelineFactory::Instance().Create("fbx");
+    // 创建管道并执行转换（使用 PipelineFactoryV2）
+    auto pipeline = pipeline::PipelineFactoryV2::Instance().Create("fbx");
     if (!pipeline) {
         std::cerr << "[fbx23dtile] Failed to create pipeline" << std::endl;
         return nullptr;
