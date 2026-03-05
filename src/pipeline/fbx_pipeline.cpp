@@ -2,74 +2,40 @@
 #include "adapters/fbx/fbx_data_source.h"
 #include "adapters/spatial/octree_index.h"
 #include "adapters/tileset/fbx_tileset_builder.h"
+#include "data_source.h"
+#include "spatial_index.h"
+#include "tileset_builder.h"
 #include "fbx/fbx_processor.h"
 #include <iostream>
 #include <filesystem>
 
 namespace pipeline {
 
-FBXPipeline::FBXPipeline() = default;
+// ============================================================
+// FBXComponentFactory 实现
+// ============================================================
 
-void FBXPipeline::SetDataSource(std::unique_ptr<DataSource> dataSource) {
-    externalDataSource_ = dataSource.get();
-    dataSource_ = std::move(dataSource);
+std::unique_ptr<DataSource> FBXComponentFactory::CreateDataSource() {
+    return DataSourceFactory::Instance().Create("fbx");
 }
 
-void FBXPipeline::SetSpatialIndex(std::unique_ptr<ISpatialIndex> spatialIndex) {
-    externalSpatialIndex_ = spatialIndex.get();
-    spatialIndex_ = std::move(spatialIndex);
+std::unique_ptr<ISpatialIndex> FBXComponentFactory::CreateSpatialIndex() {
+    return SpatialIndexFactory::Instance().Create("octree");
 }
 
-void FBXPipeline::SetTilesetBuilder(std::unique_ptr<ITilesetBuilder> tilesetBuilder) {
-    externalTilesetBuilder_ = tilesetBuilder.get();
-    tilesetBuilder_ = std::move(tilesetBuilder);
+std::unique_ptr<ITilesetBuilder> FBXComponentFactory::CreateTilesetBuilder() {
+    return TilesetBuilderFactory::Instance().Create("fbx");
 }
 
-void FBXPipeline::SetProgressCallback(ProgressCallback callback) {
-    progressCallback_ = std::move(callback);
-}
-
-DataSource* FBXPipeline::GetCurrentDataSource() {
-    if (externalDataSource_) {
-        return externalDataSource_;
-    }
-    if (!dataSource_) {
-        dataSource_ = DataSourceFactory::Instance().Create("fbx");
-    }
-    return dataSource_.get();
-}
-
-ISpatialIndex* FBXPipeline::GetCurrentSpatialIndex() {
-    if (externalSpatialIndex_) {
-        return externalSpatialIndex_;
-    }
-    if (!spatialIndex_) {
-        spatialIndex_ = SpatialIndexFactory::Instance().Create("octree");
-    }
-    return spatialIndex_.get();
-}
-
-ITilesetBuilder* FBXPipeline::GetCurrentTilesetBuilder() {
-    if (externalTilesetBuilder_) {
-        return externalTilesetBuilder_;
-    }
-    if (!tilesetBuilder_) {
-        tilesetBuilder_ = TilesetBuilderFactory::Instance().Create("fbx");
-    }
-    return tilesetBuilder_.get();
-}
-
-void FBXPipeline::ReportProgress(const std::string& stage, float progress) {
-    if (progressCallback_) {
-        progressCallback_(stage, progress);
-    }
-}
+// ============================================================
+// FBXPipeline 实现
+// ============================================================
 
 ConversionResult FBXPipeline::Convert(const ConversionParams& params) {
     ConversionResult result;
     result.success = false;
 
-    ReportProgress("initialization", 0.0f);
+    ReportStart();
 
     // 复用现有 FBXPipeline 实现（完全复用）
     // 使用新的参数结构：options 和 spatial_config
@@ -83,6 +49,7 @@ ConversionResult FBXPipeline::Convert(const ConversionParams& params) {
     settings.enableTextureCompress = params.options.enable_texture_compress;
     settings.enableLOD = params.options.enable_lod;
     settings.enableUnlit = params.options.enable_unlit;
+
     // 从 specific 参数获取 FBX 特定配置
     if (const auto* fbx_params = params.GetSpecific<FBXParams>()) {
         settings.longitude = fbx_params->longitude;
@@ -100,26 +67,23 @@ ConversionResult FBXPipeline::Convert(const ConversionParams& params) {
     ::FBXPipeline pipeline(settings);
 
     // 注入抽象接口组件（如果已设置）
-    auto* dataSource = GetCurrentDataSource();
-    if (dataSource) {
+    if (auto* dataSource = GetCurrentDataSource()) {
         pipeline.SetDataSource(dataSource);
     }
 
-    auto* spatialIndex = GetCurrentSpatialIndex();
-    if (spatialIndex) {
+    if (auto* spatialIndex = GetCurrentSpatialIndex()) {
         pipeline.SetSpatialIndex(spatialIndex);
     }
 
-    auto* tilesetBuilder = GetCurrentTilesetBuilder();
-    if (tilesetBuilder) {
+    if (auto* tilesetBuilder = GetCurrentTilesetBuilder()) {
         pipeline.SetTilesetBuilder(tilesetBuilder);
     }
 
-    ReportProgress("processing", 0.5f);
+    ReportProcessing();
 
     pipeline.run();
 
-    ReportProgress("completion", 1.0f);
+    ReportCompletion();
 
     // 检查输出
     std::filesystem::path tilesetPath = std::filesystem::path(params.output_path) / "tileset.json";

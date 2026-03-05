@@ -2,6 +2,9 @@
 #include "adapters/shapefile/shapefile_data_source.h"
 #include "adapters/spatial/quadtree_index.h"
 #include "adapters/tileset/shapefile_tileset_builder.h"
+#include "data_source.h"
+#include "spatial_index.h"
+#include "tileset_builder.h"
 #include "../shapefile/shapefile_processor.h"
 #include "../shape.h"
 #include <ogrsf_frmts.h>
@@ -10,68 +13,31 @@
 
 namespace pipeline {
 
-ShapefilePipeline::ShapefilePipeline() = default;
+// ============================================================
+// ShapefileComponentFactory 实现
+// ============================================================
 
-void ShapefilePipeline::SetDataSource(std::unique_ptr<DataSource> dataSource) {
-    externalDataSource_ = dataSource.get();
-    dataSource_ = std::move(dataSource);
+std::unique_ptr<DataSource> ShapefileComponentFactory::CreateDataSource() {
+    return DataSourceFactory::Instance().Create("shapefile");
 }
 
-void ShapefilePipeline::SetSpatialIndex(std::unique_ptr<ISpatialIndex> spatialIndex) {
-    externalSpatialIndex_ = spatialIndex.get();
-    spatialIndex_ = std::move(spatialIndex);
+std::unique_ptr<ISpatialIndex> ShapefileComponentFactory::CreateSpatialIndex() {
+    return SpatialIndexFactory::Instance().Create("quadtree");
 }
 
-void ShapefilePipeline::SetTilesetBuilder(std::unique_ptr<ITilesetBuilder> tilesetBuilder) {
-    externalTilesetBuilder_ = tilesetBuilder.get();
-    tilesetBuilder_ = std::move(tilesetBuilder);
+std::unique_ptr<ITilesetBuilder> ShapefileComponentFactory::CreateTilesetBuilder() {
+    return TilesetBuilderFactory::Instance().Create("shapefile");
 }
 
-void ShapefilePipeline::SetProgressCallback(ProgressCallback callback) {
-    progressCallback_ = std::move(callback);
-}
-
-DataSource* ShapefilePipeline::GetCurrentDataSource() {
-    if (externalDataSource_) {
-        return externalDataSource_;
-    }
-    if (!dataSource_) {
-        dataSource_ = DataSourceFactory::Instance().Create("shapefile");
-    }
-    return dataSource_.get();
-}
-
-ISpatialIndex* ShapefilePipeline::GetCurrentSpatialIndex() {
-    if (externalSpatialIndex_) {
-        return externalSpatialIndex_;
-    }
-    if (!spatialIndex_) {
-        spatialIndex_ = SpatialIndexFactory::Instance().Create("quadtree");
-    }
-    return spatialIndex_.get();
-}
-
-ITilesetBuilder* ShapefilePipeline::GetCurrentTilesetBuilder() {
-    if (externalTilesetBuilder_) {
-        return externalTilesetBuilder_;
-    }
-    if (!tilesetBuilder_) {
-        tilesetBuilder_ = TilesetBuilderFactory::Instance().Create("shapefile");
-    }
-    return tilesetBuilder_.get();
-}
-
-void ShapefilePipeline::ReportProgress(const std::string& stage, float progress) {
-    if (progressCallback_) {
-        progressCallback_(stage, progress);
-    }
-}
+// ============================================================
+// ShapefilePipeline 实现
+// ============================================================
 
 ConversionResult ShapefilePipeline::Convert(const ConversionParams& params) {
     ConversionResult result;
     result.success = false;
 
-    ReportProgress("initialization", 0.0f);
+    ReportStart();
 
     // 复用 ShapefileProcessor 处理数据（完全复用现有实现）
     // 使用新的参数结构：options 和 spatial_config
@@ -103,27 +69,24 @@ ConversionResult ShapefilePipeline::Convert(const ConversionParams& params) {
     shapefile::ShapefileProcessor processor(config);
 
     // 注入抽象接口组件（如果已设置）
-    auto* dataSource = GetCurrentDataSource();
-    if (dataSource) {
+    if (auto* dataSource = GetCurrentDataSource()) {
         processor.SetDataSource(dataSource);
     }
 
-    auto* spatialIndex = GetCurrentSpatialIndex();
-    if (spatialIndex) {
+    if (auto* spatialIndex = GetCurrentSpatialIndex()) {
         processor.SetSpatialIndex(spatialIndex);
     }
 
-    auto* tilesetBuilder = GetCurrentTilesetBuilder();
-    if (tilesetBuilder) {
+    if (auto* tilesetBuilder = GetCurrentTilesetBuilder()) {
         processor.SetTilesetBuilder(tilesetBuilder);
     }
 
-    ReportProgress("processing", 0.5f);
+    ReportProcessing();
 
     // 执行处理
     auto processResult = processor.process();
 
-    ReportProgress("completion", 1.0f);
+    ReportCompletion();
 
     if (processResult.success) {
         result.success = true;

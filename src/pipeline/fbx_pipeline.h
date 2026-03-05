@@ -2,68 +2,42 @@
 
 /**
  * @file fbx_pipeline.h
- * @brief FBX 转换管道 - 步骤4
+ * @brief FBX 转换管道
  *
- * 使用步骤1-3的抽象接口实现 FBX 转换
+ * 使用 BasePipeline 模板基类消除重复代码
  */
 
-#include "conversion_pipeline.h"
+#include "base_pipeline.h"
 #include <memory>
 
 namespace pipeline {
 
-// FBX 转换管道实现
-class FBXPipeline : public IConversionPipeline {
+// 前向声明
+class DataSource;
+class ISpatialIndex;
+class ITilesetBuilder;
+
+/**
+ * @brief FBX 管道组件工厂
+ */
+struct FBXComponentFactory : public PipelineComponentFactory {
+    std::unique_ptr<DataSource> CreateDataSource() override;
+    std::unique_ptr<ISpatialIndex> CreateSpatialIndex() override;
+    std::unique_ptr<ITilesetBuilder> CreateTilesetBuilder() override;
+};
+
+/**
+ * @brief FBX 转换管道实现
+ *
+ * 继承自 BasePipeline，只需实现 Convert() 方法
+ */
+class FBXPipeline : public BasePipeline<FBXPipeline, FBXComponentFactory> {
 public:
-    FBXPipeline();
+    FBXPipeline() = default;
     ~FBXPipeline() override = default;
-
-    // 禁止拷贝，允许移动
-    FBXPipeline(const FBXPipeline&) = delete;
-    FBXPipeline& operator=(const FBXPipeline&) = delete;
-    FBXPipeline(FBXPipeline&&) = default;
-    FBXPipeline& operator=(FBXPipeline&&) = default;
-
-    // 设置数据源
-    void SetDataSource(std::unique_ptr<DataSource> dataSource) override;
-
-    // 设置空间索引
-    void SetSpatialIndex(std::unique_ptr<ISpatialIndex> spatialIndex) override;
-
-    // 设置 TilesetBuilder
-    void SetTilesetBuilder(std::unique_ptr<ITilesetBuilder> tilesetBuilder) override;
-
-    // 设置进度回调
-    void SetProgressCallback(ProgressCallback callback) override;
 
     // 执行转换
     ConversionResult Convert(const ConversionParams& params) override;
-
-private:
-    // 内部组件
-    std::unique_ptr<DataSource> dataSource_;
-    std::unique_ptr<ISpatialIndex> spatialIndex_;
-    std::unique_ptr<ITilesetBuilder> tilesetBuilder_;
-
-    // 外部注入的组件
-    DataSource* externalDataSource_ = nullptr;
-    ISpatialIndex* externalSpatialIndex_ = nullptr;
-    ITilesetBuilder* externalTilesetBuilder_ = nullptr;
-
-    // 进度回调
-    ProgressCallback progressCallback_;
-
-    // 获取当前数据源
-    [[nodiscard]] DataSource* GetCurrentDataSource();
-
-    // 获取当前空间索引
-    [[nodiscard]] ISpatialIndex* GetCurrentSpatialIndex();
-
-    // 获取当前 TilesetBuilder
-    [[nodiscard]] ITilesetBuilder* GetCurrentTilesetBuilder();
-
-    // 报告进度
-    void ReportProgress(const std::string& stage, float progress);
 };
 
 } // namespace pipeline
