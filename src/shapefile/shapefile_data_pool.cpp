@@ -1,5 +1,7 @@
 #include "shapefile_data_pool.h"
 #include "../utils/log.h"
+#include <ogr_core.h>
+#include <ogr_geometry.h>
 #include <ogrsf_frmts.h>
 #include <osg/Geometry>
 #include <algorithm>
@@ -92,7 +94,7 @@ static void calc_normal(int baseCnt, int ptNum, osg::Vec3Array* vertices, osg::V
 // 辅助函数：从 OGRPolygon 创建 OSG 几何体（与原始实现一致）
 static osg::ref_ptr<osg::Geometry> create_geometry_from_polygon(OGRPolygon* polygon, double height,
                                                                 double centerLon, double centerLat,
-                                                                bool xySwapped = false) {
+                                                                bool xySwapped = false, bool has_Z = false, bool has_M = false) {
     if (!polygon) return nullptr;
 
     OGRLinearRing* exteriorRing = polygon->getExteriorRing();
@@ -114,7 +116,7 @@ static osg::ref_ptr<osg::Geometry> create_geometry_from_polygon(OGRPolygon* poly
         exteriorRing->getPoint(i, &pt);
         double x = pt.getX();
         double y = pt.getY();
-        double bottom = pt.getZ();
+        double bottom = has_Z ? pt.getZ() : 0.0;
 
         // 如果坐标转换后 X/Y 交换，需要交换回来
         double lon = xySwapped ? y : x;
@@ -168,7 +170,7 @@ static osg::ref_ptr<osg::Geometry> create_geometry_from_polygon(OGRPolygon* poly
             interiorRing->getPoint(i, &pt);
             double x = pt.getX();
             double y = pt.getY();
-            double bottom = pt.getZ();
+            double bottom = has_Z ? pt.getZ() : 0.0;
 
             double lon = xySwapped ? y : x;
             double lat = xySwapped ? x : y;
@@ -176,13 +178,13 @@ static osg::ref_ptr<osg::Geometry> create_geometry_from_polygon(OGRPolygon* poly
             auto [point_x, point_y] = lonlat_to_enu_meters(lon, lat, centerLon, centerLat);
 
             vertices->push_back(osg::Vec3(point_x, point_y, bottom));
-            vertices->push_back(osg::Vec3(point_x, point_y, height));
+            vertices->push_back(osg::Vec3(point_x, point_y, bottom + height));
             normals->push_back(osg::Vec3(0, 0, 0));
             normals->push_back(osg::Vec3(0, 0, 0));
 
             if (i != 0 && i != innerPtNum - 1) {
                 vertices->push_back(osg::Vec3(point_x, point_y, bottom));
-                vertices->push_back(osg::Vec3(point_x, point_y, height));
+                vertices->push_back(osg::Vec3(point_x, point_y, bottom + height));
                 normals->push_back(osg::Vec3(0, 0, 0));
                 normals->push_back(osg::Vec3(0, 0, 0));
             }
@@ -232,7 +234,7 @@ static osg::ref_ptr<osg::Geometry> create_geometry_from_polygon(OGRPolygon* poly
             normals->push_back(osg::Vec3(0, 0, -1));
 
             // 添加顶面顶点
-            vertices->push_back(osg::Vec3(point_x, point_y, height));
+            vertices->push_back(osg::Vec3(point_x, point_y, bottom + height));
             normals->push_back(osg::Vec3(0, 0, 1));
         }
         earcutPolygon.push_back(exteriorPoints);
@@ -262,7 +264,7 @@ static osg::ref_ptr<osg::Geometry> create_geometry_from_polygon(OGRPolygon* poly
                 normals->push_back(osg::Vec3(0, 0, -1));
 
                 // 添加顶面顶点
-                vertices->push_back(osg::Vec3(point_x, point_y, height));
+                vertices->push_back(osg::Vec3(point_x, point_y, bottom + height));
                 normals->push_back(osg::Vec3(0, 0, 1));
             }
             earcutPolygon.push_back(interiorPoints);
@@ -444,7 +446,10 @@ bool ShapefileDataPool::loadFromShapefileWithGeometry(const std::string& filenam
 
         // 转换几何数据
         bool xySwapped = (poCT != nullptr);  // 如果进行了坐标转换，X/Y 需要交换
+        OGRwkbGeometryType fullType = poGeometry->getGeometryType();
         OGRwkbGeometryType geomType = wkbFlatten(poGeometry->getGeometryType());
+        bool hasZ = OGR_GT_HasZ(fullType);
+        bool hasM = OGR_GT_HasM(fullType);
         if (geomType == wkbPolygon) {
             OGRPolygon* polygon = static_cast<OGRPolygon*>(poGeometry);
             auto geometry = create_geometry_from_polygon(polygon, height, centerLon, centerLat, xySwapped);
@@ -456,7 +461,7 @@ bool ShapefileDataPool::loadFromShapefileWithGeometry(const std::string& filenam
             int numGeoms = multiPoly->getNumGeometries();
             for (int i = 0; i < numGeoms; i++) {
                 OGRPolygon* polygon = static_cast<OGRPolygon*>(multiPoly->getGeometryRef(i));
-                auto geometry = create_geometry_from_polygon(polygon, height, centerLon, centerLat, xySwapped);
+                auto geometry = create_geometry_from_polygon(polygon, height, centerLon, centerLat, xySwapped, hasZ, hasM);
                 if (geometry.valid()) {
                     item->geometries.push_back(geometry);
                 }
