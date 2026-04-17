@@ -297,12 +297,14 @@ _3dtile.exe [FLAGS] [OPTIONS] --format <FORMAT> --input <PATH> --output <DIR>
 ```sh
 # from osgb dataset
 _3dtile.exe -f osgb -i E:\osgb_path -o E:\out_path
-_3dtile.exe -f osgb -i E:\osgb_path -o E:\out_path -c "{\"offset\": 0}"
+
+# from osgb with custom center point and height offset
+_3dtile.exe -f osgb -i E:\osgb_path -o E:\out_path -l 120.0 -a 30.0 -t -10.5
 
 # from single shp file
-_3dtile.exe -f shape -i E:\Data\aa.shp -o E:\Data\aa --height height
+_3dtile.exe -f shape -i E:\Data\aa.shp -o E:\Data\aa --height-field height
 
-# from single bbj file to glb file
+# from single obj file to glb file
 _3dtile.exe -f gltf -i E:\Data\TT\001.obj -o E:\Data\TT\001.glb
 
 # convert single b3dm file to glb file
@@ -311,11 +313,8 @@ _3dtile.exe -f b3dm -i E:\Data\aa.b3dm -o E:\Data\aa.glb
 # from single fbx file
 _3dtile.exe -f fbx -i E:\Data\model.fbx -o E:\Data\model
 
-# from fbx with geoid height conversion (China 1985 to WGS84)
-_3dtile.exe -f fbx -i E:\Data\model.fbx -o E:\Data\model --lon 120.0 --lat 30.0 --alt 100 --geoid egm96
-
-# from fbx with custom geoid data path
-_3dtile.exe -f fbx -i E:\Data\model.fbx -o E:\Data\model --lon 120.0 --lat 30.0 --geoid egm96 --geoid-path geoids/geoids
+# from fbx with custom position
+_3dtile.exe -f fbx -i E:\Data\model.fbx -o E:\Data\model --longitude 120.0 --latitude 30.0 --height 100
 ```
 
 ### 使用优化参数的高级选项
@@ -359,46 +358,39 @@ _3dtile.exe -f shape -i E:\Data\aa.shp -o E:\Data\aa \
 
 ### 可选参数
 
-- `-c, --config <JSON>` 在命令行传入 JSON 配置字符串（可选）
-  示例：`{"x": 120, "y": 30, "offset": 0, "max_lvl": 20, "pbr": true}`
+#### 坐标参数（OSGB 和 FBX）
 
-  JSON 配置说明：
-  ```json
-  {
-    "x": 120,        // 中心点经度
-    "y": 30,         // 中心点纬度
-    "offset": 0,     // 高度偏移
-    "max_lvl": 20,   // 最大层级
-    "pbr": true      // 启用 PBR 材质
-  }
-  ```
+- `-l, --longitude <LON>` 经度
+  设置中心点经度（WGS84），用于覆盖自动检测的坐标
+  - **适用于：** OSGB、FBX 格式
+  - **示例：** `-l 120.0` 或 `--longitude 120.0`
 
-- `--height <FIELD>` 高度字段名称
-  指定 shapefile 中的高度属性字段，转换 shp 时的必需参数
+- `-a, --latitude <LAT>` 纬度
+  设置中心点纬度（WGS84），用于覆盖自动检测的坐标
+  - **适用于：** OSGB、FBX 格式
+  - **示例：** `-a 30.0` 或 `--latitude 30.0`
 
-- `--lon <LON>` 经度
-  设置中心点经度，用于 FBX 格式定位
-
-- `--lat <LAT>` 纬度
-  设置中心点纬度，用于 FBX 格式定位
-
-- `--alt <ALT>` 高度
-  设置中心点高度，用于 FBX 格式定位
-
-- `--geoid <MODEL>` 大地水准面模型
-  设置用于高度转换的大地水准面模型，将正高（如中国1985高程）转换为椭球高（WGS84）
-  - **可选值：** `none`（默认）, `egm84`, `egm96`, `egm2008`
+- `--height <HEIGHT>` 高度
+  设置中心点绝对高度（米），用于 FBX 格式定位
   - **适用于：** FBX 格式
-  - **使用场景：** 当源数据使用正高（海拔高）而非椭球高时，需要进行高程转换
-  - **示例：** `--geoid egm96`
+  - **示例：** `--height 100`
 
-- `--geoid-path <PATH>` 大地水准面数据路径
-  设置大地水准面数据文件的路径（如 egm96-5.pgm）
-  - **默认行为：**
-    1. 优先使用 `GEOGRAPHICLIB_GEOID_PATH` 环境变量
-    2. 其次使用默认路径 `/usr/local/share/GeographicLib/geoids`
-  - **适用于：** 与 `--geoid` 配合使用
-  - **示例：** `--geoid-path /path/to/geoids`
+- `-t, --height-offset <OFFSET>` 高度偏移
+  设置高度偏移量（米），正值向上，负值向下
+  - **适用于：** OSGB 格式
+  - **示例：** `-t -10.5` 或 `--height-offset -10.5`
+
+#### Shapefile 参数
+
+- `--height-field <FIELD>` 高度字段名称
+  指定 shapefile 中的高度属性字段，转换 shp 时的必需参数
+  - **适用于：** Shapefile 格式
+  - **示例：** `--height-field height`
+
+#### 其他参数
+
+- `-c, --config <JSON>` 在命令行传入 JSON 配置字符串（已弃用，推荐使用独立参数）
+  示例：`{"x": 120, "y": 30, "offset": 0, "max_lvl": 20, "pbr": true}`
 
 - `-v, --verbose` 启用详细输出用于调试
 

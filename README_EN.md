@@ -213,21 +213,18 @@ _3dtile.exe [FLAGS] [OPTIONS] --format <FORMAT> --input <PATH> --output <DIR>
 ```sh
 # from osgb dataset
 _3dtile.exe -f osgb -i E:\osgb_path -o E:\out_path
-_3dtile.exe -f osgb -i E:\osgb_path -o E:\out_path -c "{\"offset\": 0}"
-# use pbr-texture
-_3dtile.exe -f osgb -i E:\osgb_path -o E:\out_path -c "{\"pbr\": true}"
+
+# from osgb with custom center point and height offset
+_3dtile.exe -f osgb -i E:\osgb_path -o E:\out_path -l 120.0 -a 30.0 -t -10.5
 
 # from single shp file
-_3dtile.exe -f shape -i E:\Data\aa.shp -o E:\Data\aa --height height
+_3dtile.exe -f shape -i E:\Data\aa.shp -o E:\Data\aa --height-field height
 
 # from single fbx file
 _3dtile.exe -f fbx -i E:\Data\model.fbx -o E:\Data\model
 
-# from fbx with geoid height conversion (China 1985 to WGS84)
-_3dtile.exe -f fbx -i E:\Data\model.fbx -o E:\Data\model --lon 120.0 --lat 30.0 --alt 100 --geoid egm96
-
-# from fbx with custom geoid data path
-_3dtile.exe -f fbx -i E:\Data\model.fbx -o E:\Data\model --lon 120.0 --lat 30.0 --geoid egm96 --geoid-path geoids/geoids
+# from fbx with custom position
+_3dtile.exe -f fbx -i E:\Data\model.fbx -o E:\Data\model --longitude 120.0 --latitude 30.0 --height 100
 
 # from single osgb file to glb file
 _3dtile.exe -f gltf -i E:\Data\TT\001.osgb -o E:\Data\TT\001.glb
@@ -273,34 +270,39 @@ _3dtile.exe -f shape -i E:\Data\aa.shp -o E:\Data\aa \
 
 ### Optional Flags
 
-- `-c, --config <JSON>` - JSON configuration string (optional)
-  Example: `{"x": 120, "y": 30, "offset": 0, "max_lvl": 20, "pbr": true}`
+#### Coordinate Parameters (OSGB and FBX)
 
-- `--height <FIELD>` - Height attribute field name (required for shapefile conversion)
+- `-l, --longitude <LON>` - Longitude
+  Set the center longitude (WGS84) to override auto-detected coordinates
+  - **Applies to:** OSGB, FBX formats
+  - **Example:** `-l 120.0` or `--longitude 120.0`
 
-- `--lon <LON>` - Longitude
-  Set the center longitude for FBX format positioning
+- `-a, --latitude <LAT>` - Latitude
+  Set the center latitude (WGS84) to override auto-detected coordinates
+  - **Applies to:** OSGB, FBX formats
+  - **Example:** `-a 30.0` or `--latitude 30.0`
 
-- `--lat <LAT>` - Latitude
-  Set the center latitude for FBX format positioning
-
-- `--alt <ALT>` - Altitude
-  Set the center altitude for FBX format positioning
-
-- `--geoid <MODEL>` - Geoid model for height conversion
-  Set the geoid model to convert orthometric height (e.g., China 1985) to ellipsoidal height (WGS84)
-  - **Available values:** `none` (default), `egm84`, `egm96`, `egm2008`
+- `--height <HEIGHT>` - Height
+  Set the center absolute height in meters for FBX format positioning
   - **Applies to:** FBX format
-  - **Use case:** Required when source data uses orthometric height (above sea level) instead of ellipsoidal height
-  - **Example:** `--geoid egm96`
+  - **Example:** `--height 100`
 
-- `--geoid-path <PATH>` - Path to geoid data files
-  Set the path to geoid data files (e.g., egm96-5.pgm)
-  - **Default behavior:**
-    1. First checks `GEOGRAPHICLIB_GEOID_PATH` environment variable
-    2. Falls back to default path `/usr/local/share/GeographicLib/geoids`
-  - **Applies to:** Used with `--geoid` option
-  - **Example:** `--geoid-path /path/to/geoids`
+- `-t, --height-offset <OFFSET>` - Height offset
+  Set the height offset in meters. Positive values move up, negative values move down
+  - **Applies to:** OSGB format
+  - **Example:** `-t -10.5` or `--height-offset -10.5`
+
+#### Shapefile Parameters
+
+- `--height-field <FIELD>` - Height attribute field name
+  Specify the height attribute field in shapefile, required for shapefile conversion
+  - **Applies to:** Shapefile format
+  - **Example:** `--height-field height`
+
+#### Other Parameters
+
+- `-c, --config <JSON>` - JSON configuration string (deprecated, use individual parameters instead)
+  Example: `{"x": 120, "y": 30, "offset": 0, "max_lvl": 20, "pbr": true}`
 
 - `-v, --verbose` - Enable verbose output for debugging
 
