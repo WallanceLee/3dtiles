@@ -191,6 +191,14 @@ pub fn osgb_batch_convert(
             }
         }
     }
+    // Extend root box slightly to prevent gaps at tile boundaries
+    let gap_extension = 10.0;  // 10 meters extension to cover potential gaps
+    root_box[0] += gap_extension;  // max_x
+    root_box[1] += gap_extension;  // max_y
+    root_box[2] += gap_extension;  // max_z
+    root_box[3] -= gap_extension;  // min_x
+    root_box[4] -= gap_extension;  // min_y
+    root_box[5] -= gap_extension;  // min_z
 
     //let root_geometric_error = get_geometric_error(center_y, 10);
     // Use origin height: priority: origin_height > enu_offset.2 > region_offset calculation

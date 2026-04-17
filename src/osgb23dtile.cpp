@@ -271,6 +271,18 @@ public:
     std::set<osg::Texture*> other_texture_array;
 };
 
+// Calculate geometric error based on LOD level
+// L16 (root) = 10000, L17 = 5000, L18 = 2500, L19 = 1250, L20 = 625, L21 = 312, L22 (leaf) = 156
+double get_geometric_error_by_level(int level) {
+    if (level < 0) {
+        // For files without level info (root files), use a large default value
+        return 10000.0;
+    }
+    // Base error for L16, halved for each subsequent level
+    // L16: 10000, L17: 5000, L18: 2500, L19: 1250, L20: 625, L21: 312.5, L22: 156.25
+    return 10000.0 / std::pow(2, level - 16);
+}
+
 // Wrapper function that delegates to tileset::computeGeometricError
 // Kept for backward compatibility with existing code
 double get_geometric_error(const tileset::Box& bbox){
@@ -352,11 +364,12 @@ int get_lvl_num(std::string file_name){
     std::string stem = get_file_name(file_name);
     auto p0 = stem.find("_L");
     auto p1 = stem.find("_", p0 + 2);
+    int lvl = -1;
     if (p0 != std::string::npos && p1 != std::string::npos) {
         std::string substr = stem.substr(p0 + 2, p1 - p0 - 2);
-        try { return std::stol(substr); }
+        try { lvl = std::stol(substr); }
         catch (...) {
-            return -1;
+            lvl = -1;
         }
     }
     else if(p0 != std::string::npos){
@@ -368,12 +381,12 @@ int get_lvl_num(std::string file_name){
                 break;
         }
         std::string substr = stem.substr(p0 + 2, end - p0 - 2);
-        try { return std::stol(substr); }
+        try { lvl = std::stol(substr); }
         catch (...) {
-            return -1;
+            lvl = -1;
         }
     }
-    return -1;
+    return lvl;
 }
 
 osg_tree get_all_tree(std::string& file_name) {
@@ -449,6 +462,9 @@ tinygltf::Material make_color_material_osgb(double r, double g, double b) {
     material.pbrMetallicRoughness.baseColorFactor = {r, g, b, 1.0};
     material.pbrMetallicRoughness.metallicFactor = 0.0;
     material.pbrMetallicRoughness.roughnessFactor = 1.0;
+    // Enable double-sided rendering to prevent black gaps at tile boundaries
+    // This ensures triangles are visible from both front and back faces
+    material.doubleSided = true;
     return material;
 }
 
@@ -1254,7 +1270,9 @@ void do_tile_job(osg_tree& tree, std::string out_path, int max_lvl, bool enable_
     std::string json_str;
     if (tree.file_name.empty()) return;
     int lvl = get_lvl_num(tree.file_name);
-    if (lvl > max_lvl) return;
+    if (lvl > max_lvl) {
+        return;
+    }
     if (tree.type > 0) {
         std::string b3dm_buf;
         osgb2b3dm_buf(tree.file_name, b3dm_buf, tree.bbox, tree.type, enable_texture_compress, enable_meshopt, enable_draco, enable_unlit);
@@ -1349,10 +1367,13 @@ void calc_geometric_error(osg_tree& tree) {
         calc_geometric_error(i);
     }
     if (tree.sub_nodes.empty()) {
-        tree.geometricError = get_geometric_error(tree.bbox);
+        // Use LOD level-based geometric error for leaf nodes
+        int lvl = get_lvl_num(tree.file_name);
+        tree.geometricError = get_geometric_error_by_level(lvl);
     }
     else {
-        // Collect child errors and use tileset::computeParentGeometricError
+        // For parent nodes, use the maximum child error * 2
+        // This ensures parent error is always larger than children's
         std::vector<double> childErrors;
         childErrors.reserve(tree.sub_nodes.size());
         for (auto &sub_node : tree.sub_nodes) {
@@ -1367,8 +1388,14 @@ tileset::Tile convert_osg_tree_to_tile(osg_tree& tree) {
     // Create tile with bounding volume and geometric error
     tileset::Tile tile(tree.bbox, tree.geometricError);
 
-    // Set content if this is a leaf node (type > 0)
-    if (tree.type > 0 && !tree.file_name.empty()) {
+    // 3D Tiles spec: A tile should have EITHER content OR children, not both
+    // If this node has children, it's an intermediate node - don't set content
+    // If this node has no children, it's a leaf node - set content
+    bool has_children = !tree.sub_nodes.empty();
+    bool is_leaf = !has_children;
+
+    // Set content only for leaf nodes (type > 0 and no children)
+    if (is_leaf && tree.type > 0 && !tree.file_name.empty()) {
         std::string file_name = get_file_name(tree.file_name);
         std::string uri_path = "./" + file_name;
         std::string uri = replace(uri_path, ".osgb", tree.type != 2 ? ".b3dm" : "o.b3dm");
@@ -1435,10 +1462,20 @@ osgb23dtile_path(const char* in_path, const char* out_path,
         LOG_E( "[%s] bbox is empty!", in_path);
         return NULL;
     }
-    // prevent for root node disappear
+    // prevent for root node disappear - extend bbox BEFORE generating JSON
+    // This ensures the exported tileset.json includes the extended bounding volume
+    root.bbox = root.bbox.extended(0.2);
+    // Also extend all child nodes' bbox to prevent gaps at tile boundaries
+    std::function<void(osg_tree&)> extend_all_boxes = [&](osg_tree& tree) {
+        tree.bbox = tree.bbox.extended(0.1);  // Smaller extension for child nodes
+        for (auto& child : tree.sub_nodes) {
+            extend_all_boxes(child);
+        }
+    };
+    extend_all_boxes(root);
+
     calc_geometric_error(root);
     std::string json = encode_tile_json(root, x, y);
-    root.bbox = root.bbox.extended(0.2);
 
     // Extract min/max from tileset::Box for output
     double min_x, min_y, min_z, max_x, max_y, max_z;
