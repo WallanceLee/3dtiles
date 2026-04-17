@@ -91,12 +91,6 @@ extern "C" {
 	double meter_to_longti(double m, double lati);
 }
 
-// Geoid height conversion functions
-extern "C" bool init_geoid(const char* model, const char* geoid_path);
-extern "C" double get_geoid_height(double lat, double lon);
-extern "C" double orthometric_to_ellipsoidal(double lat, double lon, double orthometric_height);
-extern "C" double ellipsoidal_to_orthometric(double lat, double lon, double ellipsoidal_height);
-extern "C" bool is_geoid_initialized();
 
 // Cleanup global resources before program exit
 extern "C" void cleanup_global_resources();

@@ -18,6 +18,7 @@ pub mod fun_c;
 mod osgb;
 mod shape;
 mod utils;
+mod validator;
 
 use chrono::prelude::*;
 use clap::{Arg, ArgAction, Command};
@@ -146,9 +147,9 @@ fn main() {
                 .num_args(1),
         )
         .arg(
-            Arg::new("height")
-                .long("height")
-                .help("Set the shapefile height field")
+            Arg::new("height-field")
+                .long("height-field")
+                .help("Set the shapefile height field name")
                 .num_args(1),
         )
         .arg(
@@ -189,34 +190,30 @@ fn main() {
                 .action(ArgAction::SetTrue),
         )
         .arg(
-           Arg::new("lon")
-            .long("lon")
-            .help("Set the longitude")
+           Arg::new("longitude")
+            .long("longitude")
+            .short('l')
+            .help("Set the longitude for the center point (degrees). Range: [-180, 180]")
             .num_args(1),
         )
         .arg(
-           Arg::new("lat")
-            .long("lat")
-            .help("Set the latitude")
+           Arg::new("latitude")
+            .long("latitude")
+            .short('a')
+            .help("Set the latitude for the center point (degrees). Range: [-90, 90]")
             .num_args(1),
         )
         .arg(
-           Arg::new("alt")
-            .long("alt")
-            .help("Set the altitude")
+           Arg::new("height")
+            .long("height")
+            .help("Set the absolute height for FBX conversion (meters)")
             .num_args(1),
         )
         .arg(
-           Arg::new("geoid")
-            .long("geoid")
-            .help("Set the geoid model for height conversion (none, egm84, egm96, egm2008). Converts orthometric height (e.g., China 1985) to ellipsoidal height (WGS84)")
-            .value_parser(["none", "egm84", "egm96", "egm2008"])
-            .num_args(1),
-        )
-        .arg(
-           Arg::new("geoid-path")
-            .long("geoid-path")
-            .help("Set the path to geoid data files (egm96-5.pgm, etc.). Default: GEOGRAPHICLIB_GEOID_PATH env or /usr/local/share/GeographicLib/geoids")
+           Arg::new("height-offset")
+            .long("height-offset")
+            .short('t')
+            .help("Set the height offset for OSGB conversion (meters). Positive values move up, negative values move down.")
             .num_args(1),
         )
         .get_matches();
@@ -238,27 +235,22 @@ fn main() {
         .map(|s| s.as_str())
         .unwrap_or("");
     let height_field = matches
-        .get_one::<String>("height")
+        .get_one::<String>("height-field")
         .map(|s| s.as_str())
         .unwrap_or("");
 
-    let lat_val = matches
-        .get_one::<String>("lat")
+    let longitude_val = matches
+        .get_one::<String>("longitude")
         .and_then(|s| s.parse::<f64>().ok());
-    let lon_val = matches
-        .get_one::<String>("lon")
+    let latitude_val = matches
+        .get_one::<String>("latitude")
         .and_then(|s| s.parse::<f64>().ok());
-    let alt_val = matches
-        .get_one::<String>("alt")
+    let height_val = matches
+        .get_one::<String>("height")
         .and_then(|s| s.parse::<f64>().ok());
-    let geoid_model = matches
-        .get_one::<String>("geoid")
-        .map(|s| s.as_str())
-        .unwrap_or("none");
-    let geoid_path = matches
-        .get_one::<String>("geoid-path")
-        .map(|s| s.as_str())
-        .unwrap_or("");
+    let height_offset_val = matches
+        .get_one::<String>("height-offset")
+        .and_then(|s| s.parse::<f64>().ok());
 
     // Parse feature flags
     let enable_draco = matches.get_flag("enable-draco");
@@ -283,15 +275,44 @@ fn main() {
         info!("LOD (Level of Detail) enabled with default configuration [1.0, 0.5, 0.25]");
     }
 
-    // Initialize geoid calculator if geoid model is specified
-    if geoid_model != "none" {
-        info!("Initializing geoid model: {} with path: {}", geoid_model, if geoid_path.is_empty() { "default" } else { geoid_path });
-        let geoid_path_c = std::ffi::CString::new(geoid_path).unwrap_or_default();
-        let geoid_model_c = std::ffi::CString::new(geoid_model).unwrap_or_default();
-        let success = unsafe { fun_c::init_geoid(geoid_model_c.as_ptr(), geoid_path_c.as_ptr()) };
-        if !success {
-            error!("Failed to initialize geoid model: {}. Height conversion will be disabled.", geoid_model);
+    // Log new coordinate parameters if provided
+    if let Some(lon) = longitude_val {
+        info!("Longitude set to: {}", lon);
+    }
+    if let Some(lat) = latitude_val {
+        info!("Latitude set to: {}", lat);
+    }
+    if let Some(h) = height_val {
+        info!("Height set to: {}", h);
+    }
+    if let Some(offset) = height_offset_val {
+        info!("Height offset set to: {}", offset);
+    }
+
+    // Show deprecation warning if --config is used
+    if !tile_config.is_empty() {
+        warn!("--config parameter is deprecated. Please use --longitude/-l, --latitude/-a, --height, or --height-offset/-o instead.");
+        warn!("OSGB example: ./3dtiles -i input -o output -f osgb --longitude 113.5 --latitude 32.8 --height-offset -308");
+        warn!("FBX example: ./3dtiles -i input.fbx -o output -f fbx --longitude 113.5 --latitude 32.8 --height 50");
+        warn!("Short form: ./3dtiles -i input -o output -f osgb -l 113.5 -a 32.8 -t -308");
+    }
+
+    // Validate coordinate parameters based on format
+    let validator = validator::CoordinateValidator::new();
+    match format {
+        "osgb" => {
+            if let Err(e) = validator.validate_osgb_params(longitude_val, latitude_val, height_offset_val) {
+                error!("{}", validator.format_error(&e));
+                return;
+            }
         }
+        "fbx" => {
+            if let Err(e) = validator.validate_fbx_params(longitude_val, latitude_val, height_val) {
+                error!("{}", validator.format_error(&e));
+                return;
+            }
+        }
+        _ => {}
     }
 
     let in_path = std::path::Path::new(input);
@@ -306,7 +327,18 @@ fn main() {
     match format {
         "osgb" => {
             // osgb默认开启material_unlit
-            convert_osgb(input, output, tile_config, enable_simplify, enable_texture_compress, enable_draco, true);
+            convert_osgb(
+                input,
+                output,
+                tile_config,
+                enable_simplify,
+                enable_texture_compress,
+                enable_draco,
+                true,
+                longitude_val,
+                latitude_val,
+                height_offset_val,
+            );
         }
         "shape" => {
             convert_shapefile(
@@ -334,9 +366,9 @@ fn main() {
                 enable_draco,
                 enable_unlit,
                 enable_lod,
-                lat_val,
-                lon_val,
-                alt_val,
+                latitude_val,
+                longitude_val,
+                height_val,
             );
         }
         _ => {
@@ -492,7 +524,19 @@ struct ModelMetadata {
     pub SRSOrigin: String,
 }
 
-fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enable_texture_compress: bool, enable_draco: bool, enable_unlit: bool) {
+#[allow(clippy::too_many_arguments)]
+fn convert_osgb(
+    src: &str,
+    dest: &str,
+    config: &str,
+    enable_simplify: bool,
+    enable_texture_compress: bool,
+    enable_draco: bool,
+    enable_unlit: bool,
+    longitude: Option<f64>,
+    latitude: Option<f64>,
+    height_offset: Option<f64>,
+) {
     use serde_json::Value;
     use std::fs::File;
     use std::io::prelude::*;
@@ -583,12 +627,11 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
                                                 // Apply SRSOrigin offset via the root tileset transform matrix
                                                 // (per-vertex Correction is skipped for ENU).
                                                 enu_offset = Some((offset_x, offset_y, offset_z));
-                                                // Use the geoid-corrected height from GeoTransform (if geoid is initialized)
-                                                let geo_origin_height = unsafe { osgb::get_geo_origin_height() };
-                                                origin_height = Some(geo_origin_height);
+                                                // Use the height from SRSOrigin directly (geoid correction removed)
+                                                origin_height = Some(offset_z);
 
                                                 info!("ENU SRSOrigin offset detected: x={}, y={}, z={}", offset_x, offset_y, offset_z);
-                                                info!("Using geographic origin for transform: lon={}, lat={}, h={}", center_x, center_y, geo_origin_height);
+                                                info!("Using geographic origin for transform: lon={}, lat={}, h={}", center_x, center_y, offset_z);
                                             } else {
                                                 error!("Failed to parse SRSOrigin values");
                                             }
@@ -638,11 +681,10 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
                                                 if osgb::epsg_convert(srs, pt.as_mut_ptr(), gdal_ptr, proj_ptr) {
                                                     center_x = pt[0];
                                                     center_y = pt[1];
-                                                    // Use the geoid-corrected height from GeoTransform (if geoid is initialized)
-                                                    // This handles the conversion from orthometric height (China 1985) to ellipsoidal height (WGS84)
-                                                    let geo_origin_height = osgb::get_geo_origin_height();
-                                                    origin_height = Some(geo_origin_height);
-                                                    info!("epsg: x->{}, y->{}, h={} (geoid-corrected from original h={})", pt[0], pt[1], geo_origin_height, pt[2]);
+                                                    // Use the height from converted coordinates directly (geoid correction removed)
+                                                    // User can apply height offset using --height-offset parameter if needed
+                                                    origin_height = Some(pt[2]);
+                                                    info!("epsg: x->{}, y->{}, h={}", pt[0], pt[1], pt[2]);
                                                 } else {
                                                     error!("epsg convert failed!");
                                                 }
@@ -737,21 +779,44 @@ fn convert_osgb(src: &str, dest: &str, config: &str, enable_simplify: bool, enab
     } else {
         error!("{} is missing", metadata_file.display());
     }
+    // Parse config (deprecated, but kept for backward compatibility)
+    // New command-line parameters take precedence over config
     if let Ok(v) = serde_json::from_str::<Value>(config) {
-        if let Some(x) = v["x"].as_f64() {
-            center_x = x;
+        // Only use config values if CLI args are not provided
+        if longitude.is_none() {
+            if let Some(x) = v["x"].as_f64() {
+                center_x = x;
+                warn!("Using deprecated config 'x', please use --longitude/-l instead");
+            }
         }
-        if let Some(y) = v["y"].as_f64() {
-            center_y = y;
+        if latitude.is_none() {
+            if let Some(y) = v["y"].as_f64() {
+                center_y = y;
+                warn!("Using deprecated config 'y', please use --latitude/-a instead");
+            }
         }
-        if let Some(h) = v["offset"].as_f64() {
-            trans_region = Some(h);
+        if height_offset.is_none() {
+            if let Some(h) = v["offset"].as_f64() {
+                trans_region = Some(h);
+                warn!("Using deprecated config 'offset', please use --height-offset/-o instead");
+            }
         }
         if let Some(lvl) = v["max_lvl"].as_i64() {
             max_lvl = Some(lvl as i32);
         }
     } else if !config.is_empty() {
         error!("config error --> {}", config);
+    }
+
+    // Apply new CLI parameters (highest priority)
+    if let Some(lon) = longitude {
+        center_x = lon;
+    }
+    if let Some(lat) = latitude {
+        center_y = lat;
+    }
+    if let Some(offset) = height_offset {
+        trans_region = Some(offset);
     }
     let tick = time::SystemTime::now();
     if let Err(e) = osgb::osgb_batch_convert(

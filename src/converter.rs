@@ -16,8 +16,10 @@ pub struct ConversionConfig {
     pub longitude: f64,
     /// 纬度（原点）
     pub latitude: f64,
-    /// 高度（原点）
+    /// 高度（原点）- 用于FBX等绝对高度场景
     pub height: f64,
+    /// 高度偏移 - 用于OSGB等相对高度偏移场景
+    pub height_offset: Option<f64>,
     /// 是否启用 Draco 压缩
     pub enable_draco: bool,
     /// 是否启用网格简化
@@ -45,11 +47,19 @@ impl ConversionConfig {
         self
     }
 
-    /// 设置原点坐标
+    /// 设置原点坐标（FBX等绝对高度场景）
     pub fn with_origin(mut self, lon: f64, lat: f64, height: f64) -> Self {
         self.longitude = lon;
         self.latitude = lat;
         self.height = height;
+        self
+    }
+
+    /// 设置原点坐标和高度偏移（OSGB等相对偏移场景）
+    pub fn with_origin_offset(mut self, lon: f64, lat: f64, offset: f64) -> Self {
+        self.longitude = lon;
+        self.latitude = lat;
+        self.height_offset = Some(offset);
         self
     }
 
@@ -240,7 +250,7 @@ impl DataConverter for OSGBConverter {
             config.max_level,
             config.longitude,
             config.latitude,
-            None, // region_offset
+            config.height_offset, // 使用height_offset作为region_offset
             None, // enu_offset
             None, // origin_height
             config.enable_texture_compress,

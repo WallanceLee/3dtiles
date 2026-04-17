@@ -77,13 +77,8 @@ epsg_convert(int insrs, double* val, char* gdal_data, char *proj_lib) {
 
     auto geo_ref = coords::GeoReference::FromDegrees(lon, lat, height);
 
-    // 创建全局坐标转换器（带Geoid配置）
-    coords::GeoidConfig geoid_config;
-    if (is_geoid_initialized()) {
-        geoid_config = coords::GeoidConfig::EGM96();
-        geoid_config.enabled = true;
-    }
-    g_transformer = std::make_shared<coords::CoordinateTransformer>(cs, geo_ref, geoid_config);
+    // 创建全局坐标转换器
+    g_transformer = std::make_shared<coords::CoordinateTransformer>(cs, geo_ref);
 
     // 销毁临时转换器
     OGRCoordinateTransformation::DestroyCT(poCT);
@@ -149,14 +144,8 @@ wkt_convert(char* wkt, double* val, char* path) {
     val[1] = lat;
     val[2] = height;
 
-    double final_height = height;
-    if (is_geoid_initialized()) {
-        double geoid_height = get_geoid_height(lat, lon);
-        final_height = orthometric_to_ellipsoidal(lat, lon, height);
-    }
-
-    // 创建地理参考
-    auto geo_ref = coords::GeoReference::FromDegrees(lon, lat, final_height);
+    // 创建地理参考（直接使用传入的高度，不再进行Geoid校正）
+    auto geo_ref = coords::GeoReference::FromDegrees(lon, lat, height);
 
     // 创建全局坐标转换器
     g_transformer = std::make_shared<coords::CoordinateTransformer>(cs, geo_ref);
@@ -452,36 +441,8 @@ extern "C" double get_geo_origin_height() {
     return 0.0;
 }
 
-// Geoid height conversion functions - C FFI implementations
-#include "GeoidHeight.h"
-
-extern "C" bool init_geoid(const char* model, const char* geoid_path) {
-    std::string model_str = model ? model : "none";
-    std::string path_str = geoid_path ? geoid_path : "";
-
-    GeoidHeight::GeoidModel geoid_model = GeoidHeight::GeoidCalculator::StringToGeoidModel(model_str);
-    return GeoidHeight::InitializeGlobalGeoidCalculator(geoid_model, path_str);
-}
-
-extern "C" double get_geoid_height(double lat, double lon) {
-    auto& calculator = GeoidHeight::GetGlobalGeoidCalculator();
-    auto height = calculator.GetGeoidHeight(lat, lon);
-    return height.value_or(0.0);
-}
-
-extern "C" double orthometric_to_ellipsoidal(double lat, double lon, double orthometric_height) {
-    auto& calculator = GeoidHeight::GetGlobalGeoidCalculator();
-    return calculator.ConvertOrthometricToEllipsoidal(lat, lon, orthometric_height);
-}
-
-extern "C" double ellipsoidal_to_orthometric(double lat, double lon, double ellipsoidal_height) {
-    auto& calculator = GeoidHeight::GetGlobalGeoidCalculator();
-    return calculator.ConvertEllipsoidalToOrthometric(lat, lon, ellipsoidal_height);
-}
-
-extern "C" bool is_geoid_initialized() {
-    return GeoidHeight::GetGlobalGeoidCalculator().IsInitialized();
-}
+// Note: Geoid height conversion functions have been removed
+// Use --height-offset parameter for height adjustment instead
 
 extern "C" void cleanup_global_resources() {
     g_transformer.reset();

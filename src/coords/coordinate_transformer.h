@@ -1,7 +1,6 @@
 #pragma once
 
 #include "coordinate_system.h"
-#include "GeoidHeight.h"
 #include <ogr_spatialref.h>
 #include <memory>
 #include <vector>
@@ -13,27 +12,6 @@ namespace coords {
 enum class TransformMode {
     None,               // 无地理转换（OSGB→GLTF场景）
     WithGeoReference    // 带地理参考转换（3D Tiles场景）
-};
-
-// Geoid配置
-// 用于配置高程基准校正参数
-struct GeoidConfig {
-    bool enabled = false;                                // 是否启用Geoid校正
-    GeoidHeight::GeoidModel model = GeoidHeight::GeoidModel::EGM96;  // Geoid模型
-    std::string data_path;                               // Geoid数据文件路径
-
-    // 创建禁用Geoid校正的配置
-    static GeoidConfig Disabled() { return {false}; }
-
-    // 创建EGM96模型配置
-    static GeoidConfig EGM96(const std::string& path = "") {
-        return {true, GeoidHeight::GeoidModel::EGM96, path};
-    }
-
-    // 创建EGM2008模型配置
-    static GeoidConfig EGM2008(const std::string& path = "") {
-        return {true, GeoidHeight::GeoidModel::EGM2008, path};
-    }
 };
 
 // 坐标转换器
@@ -48,11 +26,6 @@ public:
     // 模式2：带地理参考转换（3D Tiles场景）
     // 支持完整的坐标转换链
     CoordinateTransformer(const CoordinateSystem& cs, const GeoReference& geo_ref);
-
-    // 模式3：带地理参考和Geoid配置
-    // 用于需要高程基准校正的场景
-    CoordinateTransformer(const CoordinateSystem& cs, const GeoReference& geo_ref,
-                          const GeoidConfig& geoid_config);
 
     ~CoordinateTransformer();
 
@@ -112,17 +85,6 @@ public:
     // 获取地理原点高度(米, 椭球高)
     double GeoOriginHeight() const { return geo_origin_height_; }
 
-    // ----- Geoid配置 -----
-
-    // 启用/禁用Geoid校正
-    void EnableGeoidCorrection(bool enabled) { geoid_config_.enabled = enabled; }
-
-    // 是否启用Geoid校正
-    bool IsGeoidCorrectionEnabled() const { return geoid_config_.enabled; }
-
-    // 获取Geoid配置
-    const GeoidConfig& GetGeoidConfig() const { return geoid_config_; }
-
     // ----- 静态工具方法 -----
 
     // 计算ENU到ECEF的转换矩阵
@@ -142,13 +104,6 @@ private:
 
     // 创建OGR坐标转换器
     void CreateOGRTransform();
-
-    // 应用Geoid高度校正
-    // 将正高转换为椭球高
-    double ApplyGeoidCorrection(double lat, double lon, double height) const;
-
-    // 判断是否应该应用Geoid校正
-    bool ShouldApplyGeoidCorrection() const;
 
     CoordinateSystem source_cs_;            // 源坐标系
     TransformMode mode_ = TransformMode::None;  // 转换模式
@@ -172,9 +127,6 @@ private:
         }
     };
     std::unique_ptr<OGRCoordinateTransformation, OGRCTDeleter> ogr_transform_;
-
-    // Geoid配置
-    GeoidConfig geoid_config_;
 };
 
 } // namespace coords

@@ -20,20 +20,8 @@ CoordinateTransformer::CoordinateTransformer(const CoordinateSystem& cs)
 CoordinateTransformer::CoordinateTransformer(const CoordinateSystem& cs,
                                              const GeoReference& geo_ref)
     : source_cs_(cs)
-    , mode_(TransformMode::WithGeoReference)
-    , geoid_config_(GeoidConfig::Disabled()) {
-    // 带地理参考模式，不支持Geoid校正
-    InitializeWithGeoRef(geo_ref);
-}
-
-CoordinateTransformer::CoordinateTransformer(const CoordinateSystem& cs,
-                                             const GeoReference& geo_ref,
-                                             const GeoidConfig& geoid_config)
-    : source_cs_(cs)
-    , mode_(TransformMode::WithGeoReference)
-    , geoid_config_(geoid_config) {
-    // 带地理参考和Geoid配置模式
-    // 适用于需要高程基准校正的场景
+    , mode_(TransformMode::WithGeoReference) {
+    // 带地理参考模式
     InitializeWithGeoRef(geo_ref);
 }
 
@@ -48,8 +36,7 @@ CoordinateTransformer::CoordinateTransformer(CoordinateTransformer&& other) noex
     , enu_to_ecef_(other.enu_to_ecef_)
     , ecef_to_enu_(other.ecef_to_enu_)
     , axis_transform_(other.axis_transform_)
-    , ogr_transform_(std::move(other.ogr_transform_))
-    , geoid_config_(other.geoid_config_) {
+    , ogr_transform_(std::move(other.ogr_transform_)) {
 }
 
 CoordinateTransformer& CoordinateTransformer::operator=(CoordinateTransformer&& other) noexcept {
@@ -63,7 +50,6 @@ CoordinateTransformer& CoordinateTransformer::operator=(CoordinateTransformer&& 
         ecef_to_enu_ = other.ecef_to_enu_;
         axis_transform_ = other.axis_transform_;
         ogr_transform_ = std::move(other.ogr_transform_);
-        geoid_config_ = other.geoid_config_;
     }
     return *this;
 }
@@ -82,17 +68,12 @@ void CoordinateTransformer::InitializeWithGeoRef(const GeoReference& geo_ref) {
         // EPSG/WKT类型：创建OGR转换器用于后续坐标转换
         CreateOGRTransform();
 
-        // 使用传入的地理参考（已经过Geoid校正）
+        // 使用传入的地理参考
         // 如果传入的geo_ref有效（非零），使用它；否则自己计算
         if (geo_ref.lon != 0.0 || geo_ref.lat != 0.0) {
             geo_origin_lon_ = geo_ref.lon;
             geo_origin_lat_ = geo_ref.lat;
             geo_origin_height_ = geo_ref.height;
-
-            // 如果Geoid配置启用但高度未校正，应用校正
-            if (geoid_config_.enabled && GeoidHeight::GetGlobalGeoidCalculator().IsInitialized()) {
-                geo_origin_height_ = ApplyGeoidCorrection(geo_origin_lat_, geo_origin_lon_, geo_origin_height_);
-            }
         } else {
             // 自己计算原点
             auto [origin_x, origin_y, origin_z] = source_cs_.GetSourceOrigin();
@@ -105,8 +86,6 @@ void CoordinateTransformer::InitializeWithGeoRef(const GeoReference& geo_ref) {
             geo_origin_lon_ = origin.x;
             geo_origin_lat_ = origin.y;
             geo_origin_height_ = origin.z;
-
-            geo_origin_height_ = ApplyGeoidCorrection(geo_origin_lat_, geo_origin_lon_, geo_origin_height_);
         }
 
         fprintf(stderr, "[CoordinateTransformer] OGR transform result: lon=%.10f lat=%.10f h=%.3f\n",
@@ -161,43 +140,6 @@ void CoordinateTransformer::CreateOGRTransform() {
     } else {
         fprintf(stderr, "[CoordinateTransformer] Failed to create OGR transform\n");
     }
-}
-
-bool CoordinateTransformer::ShouldApplyGeoidCorrection() const {
-    // 1. Geoid配置必须启用
-    if (!geoid_config_.enabled) return false;
-
-    // 2. Geoid计算器必须已初始化
-    if (!GeoidHeight::GetGlobalGeoidCalculator().IsInitialized()) return false;
-
-    // 3. 根据坐标系类型和垂直基准判断
-    switch (source_cs_.Type()) {
-        case CoordinateType::EPSG:
-        case CoordinateType::WKT: {
-            // EPSG/WKT坐标系：检查垂直基准
-            auto datum = source_cs_.GetVerticalDatum();
-            // 正高或未知时需要校正
-            return datum == VerticalDatum::Orthometric || datum == VerticalDatum::Unknown;
-        }
-        case CoordinateType::ENU:
-            // ENU坐标系：假设为WGS84椭球高，不需要校正
-            return false;
-        case CoordinateType::LocalCartesian:
-            // 本地笛卡尔：用户指定的高度假设为椭球高
-            return false;
-        default:
-            return false;
-    }
-}
-
-double CoordinateTransformer::ApplyGeoidCorrection(double lat, double lon, double height) const {
-    if (!ShouldApplyGeoidCorrection()) return height;
-
-    // 正高 → 椭球高
-    double corrected = GeoidHeight::GetGlobalGeoidCalculator()
-        .ConvertOrthometricToEllipsoidal(lat, lon, height);
-
-    return corrected;
 }
 
 glm::dvec3 CoordinateTransformer::ToWGS84(const glm::dvec3& point) const {
@@ -303,13 +245,10 @@ glm::dvec3 CoordinateTransformer::ToLocalENU(const glm::dvec3& point) const {
         // 2. 投影坐标 → WGS84地理坐标
         ogr_transform_->Transform(1, &result.x, &result.y, &result.z);
 
-        // 3. 应用Geoid高度校正
-        result.z = ApplyGeoidCorrection(result.y, result.x, result.z);
-
-        // 4. WGS84 → ECEF
+        // 3. WGS84 → ECEF
         glm::dvec3 ecef = CartographicToEcef(result.x, result.y, result.z);
 
-        // 5. ECEF → 局部ENU
+        // 4. ECEF → 局部ENU
         glm::dvec4 enu = ecef_to_enu_ * glm::dvec4(ecef, 1.0);
         return {enu.x, enu.y, enu.z};
     } else {

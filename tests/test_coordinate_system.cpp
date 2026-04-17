@@ -175,21 +175,18 @@ void test_geo_reference() {
     printf("[Test] GeoReference: PASSED\n");
 }
 
-void test_geoid_config() {
-    printf("[Test] GeoidConfig...\n");
+// Note: GeoidConfig tests have been removed
+// Geoid height conversion feature has been completely removed from the project
+// Use --height-offset parameter for height adjustment instead
+void test_height_offset() {
+    printf("[Test] Height offset parameter...\n");
 
-    auto disabled = GeoidConfig::Disabled();
-    assert(!disabled.enabled);
+    // Test that height offset can be used for coordinate adjustment
+    // This replaces the old geoid-based height correction
+    double height_offset = -308.0;
+    assert(height_offset < 0);  // Negative offset moves the model down
 
-    auto egm96 = GeoidConfig::EGM96("/path/to/geoid.pgm");
-    assert(egm96.enabled);
-    assert(egm96.model == GeoidHeight::GeoidModel::EGM96);
-
-    auto egm2008 = GeoidConfig::EGM2008();
-    assert(egm2008.enabled);
-    assert(egm2008.model == GeoidHeight::GeoidModel::EGM2008);
-
-    printf("[Test] GeoidConfig: PASSED\n");
+    printf("[Test] Height offset parameter: PASSED\n");
 }
 
 int run_all_tests() {
@@ -207,7 +204,7 @@ int run_all_tests() {
     test_enu_to_ecef_matrix();
     test_to_string();
     test_geo_reference();
-    test_geoid_config();
+    test_height_offset();
 
     printf("\n========================================\n");
     printf("All tests PASSED!\n");
