@@ -271,22 +271,37 @@ public:
     std::set<osg::Texture*> other_texture_array;
 };
 
-// Calculate geometric error based on LOD level
-// L16 (root) = 10000, L17 = 5000, L18 = 2500, L19 = 1250, L20 = 625, L21 = 312, L22 (leaf) = 156
-double get_geometric_error_by_level(int level) {
-    if (level < 0) {
-        // For files without level info (root files), use a large default value
-        return 10000.0;
-    }
-    // Base error for L16, halved for each subsequent level
-    // L16: 10000, L17: 5000, L18: 2500, L19: 1250, L20: 625, L21: 312.5, L22: 156.25
-    return 10000.0 / std::pow(2, level - 16);
-}
+// Calculate geometric error based on both LOD level and bounding box
+// This ensures tiles with different sizes at the same LOD level get appropriate errors
+double get_geometric_error(int level, const tileset::Box& bbox) {
+    // Get the maximum dimension of the bounding box
+    auto x_axis = bbox.xAxis();
+    auto y_axis = bbox.yAxis();
+    auto z_axis = bbox.zAxis();
 
-// Wrapper function that delegates to tileset::computeGeometricError
-// Kept for backward compatibility with existing code
-double get_geometric_error(const tileset::Box& bbox){
-    return tileset::computeGeometricError(bbox, 0.05);
+    double max_dim = std::max({
+        std::sqrt(x_axis[0]*x_axis[0] + x_axis[1]*x_axis[1] + x_axis[2]*x_axis[2]),
+        std::sqrt(y_axis[0]*y_axis[0] + y_axis[1]*y_axis[1] + y_axis[2]*y_axis[2]),
+        std::sqrt(z_axis[0]*z_axis[0] + z_axis[1]*z_axis[1] + z_axis[2]*z_axis[2])
+    });
+
+    if (level < 0) {
+        // For files without level info (root files), use box-based calculation
+        return max_dim * 2.0;
+    }
+
+    // Base error calculation:
+    // - Use max dimension as base for L16
+    // - Halve for each subsequent level
+    // This ensures larger tiles have larger geometric errors at the same LOD level
+    double base_error = max_dim * 2.0;
+    int level_diff = level - 16;
+
+    if (level_diff <= 0) {
+        return base_error;
+    }
+
+    return base_error / std::pow(2, level_diff);
 }
 
 std::string get_file_name(std::string path) {
@@ -1367,9 +1382,9 @@ void calc_geometric_error(osg_tree& tree) {
         calc_geometric_error(i);
     }
     if (tree.sub_nodes.empty()) {
-        // Use LOD level-based geometric error for leaf nodes
+        // Use LOD level and bounding box-based geometric error for leaf nodes
         int lvl = get_lvl_num(tree.file_name);
-        tree.geometricError = get_geometric_error_by_level(lvl);
+        tree.geometricError = get_geometric_error(lvl, tree.bbox);
     }
     else {
         // For parent nodes, use the maximum child error * 2
