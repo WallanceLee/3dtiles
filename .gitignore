@@ -8,4 +8,4 @@
 .DS_Store
 
 data
-compile_commands.json
+compile_commands.jsontests/e2e/3dtiles-viewer/public/output/
