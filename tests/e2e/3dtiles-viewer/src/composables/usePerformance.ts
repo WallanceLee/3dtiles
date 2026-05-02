@@ -10,7 +10,13 @@ export function usePerformance(viewer: Ref<Cesium.Viewer | null>) {
     vertices: 0,
     memory: 0,
     tiles: 0,
-    cacheSize: 0
+    cacheSize: 0,
+    tilesTotal: 0,
+    tilesLoaded: 0,
+    tilesVisible: 0,
+    tilesRendered: 0,
+    rootSSE: 0,
+    currentGeometricError: 0
   });
 
   const isMonitoring = shallowRef<boolean>(false);
@@ -35,18 +41,44 @@ export function usePerformance(viewer: Ref<Cesium.Viewer | null>) {
       lastTime = currentTime;
     }
 
-    let tileCount = 0;
+    // Extract tileset SSE and statistics
+    let tilesTotal = 0, tilesLoaded = 0, tilesVisible = 0, tilesRendered = 0;
+    let rootSSE = 0, currentGeometricError = 0;
     const primitives = scene.primitives;
     for (let i = 0; i < primitives.length; i++) {
-      const primitive = primitives.get(i);
-      if ((primitive as any).tileset) {
-        tileCount++;
+      const p = primitives.get(i);
+      // Cesium3DTileset has a 'root' property — use that for detection
+      const root = (p as any).root;
+      if (!root || !root.geometricError) continue;
+
+      const ts = p as any;
+      // statistics is a public property on Cesium3DTileset
+      const stats = (ts as any).statistics;
+      if (stats) {
+        tilesTotal = stats.numberOfTilesTotal ?? 0;
+        tilesLoaded = stats.numberOfTilesLoaded ?? 0;
+        tilesVisible = stats.numberOfTilesVisited ?? 0;
+        tilesRendered = stats.numberOfTilesSelected ?? 0;
       }
+
+      // Get SSE: root tile has getScreenSpaceError publicly declared
+      try {
+        rootSSE = (root as any).getScreenSpaceError((scene as any).frameState, false);
+      } catch {
+        rootSSE = 0;
+      }
+      currentGeometricError = root.geometricError ?? 0;
     }
 
     metrics.value = {
       ...metrics.value,
-      tiles: tileCount,
+      tiles: tilesTotal,
+      tilesTotal,
+      tilesLoaded,
+      tilesVisible,
+      tilesRendered,
+      rootSSE: Math.round(rootSSE * 100) / 100,
+      currentGeometricError,
       memory: (performance as any).memory?.usedJSHeapSize || 0
     };
   }
@@ -78,13 +110,10 @@ export function usePerformance(viewer: Ref<Cesium.Viewer | null>) {
 
   function resetMetrics() {
     metrics.value = {
-      fps: 0,
-      drawCalls: 0,
-      triangles: 0,
-      vertices: 0,
-      memory: 0,
-      tiles: 0,
-      cacheSize: 0
+      fps: 0, drawCalls: 0, triangles: 0, vertices: 0,
+      memory: 0, tiles: 0, cacheSize: 0,
+      tilesTotal: 0, tilesLoaded: 0, tilesVisible: 0, tilesRendered: 0,
+      rootSSE: 0, currentGeometricError: 0
     };
   }
 

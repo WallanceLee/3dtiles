@@ -103,6 +103,44 @@
       </div>
 
       <div class="section">
+        <h4>瓦片统计</h4>
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="label">总数:</span>
+            <span class="value">{{ metrics?.tilesTotal ?? '-' }}</span>
+          </div>
+          <div class="info-item">
+            <span class="label">已加载:</span>
+            <span class="value">{{ metrics?.tilesLoaded ?? '-' }}</span>
+          </div>
+          <div class="info-item">
+            <span class="label">可见:</span>
+            <span class="value">{{ metrics?.tilesVisible ?? '-' }}</span>
+          </div>
+          <div class="info-item">
+            <span class="label">已渲染:</span>
+            <span class="value">{{ metrics?.tilesRendered ?? '-' }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h4>SSE / LOD</h4>
+        <div class="info-grid">
+          <div class="info-item highlight">
+            <span class="label">根节点 SSE:</span>
+            <span class="value" :class="{ 'good': (metrics?.rootSSE ?? 99) <= 16, 'bad': (metrics?.rootSSE ?? 99) > 16 }">
+              {{ metrics?.rootSSE?.toFixed(2) ?? '-' }} px
+            </span>
+          </div>
+          <div class="info-item">
+            <span class="label">当前几何误差:</span>
+            <span class="value">{{ metrics?.currentGeometricError?.toFixed(2) ?? '-' }} m</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
         <h4>调试选项</h4>
         <div class="debug-options">
           <label class="checkbox-item">

@@ -271,38 +271,9 @@ public:
     std::set<osg::Texture*> other_texture_array;
 };
 
-// Calculate geometric error based on both LOD level and bounding box
-// This ensures tiles with different sizes at the same LOD level get appropriate errors
-double get_geometric_error(int level, const tileset::Box& bbox) {
-    // Get the maximum dimension of the bounding box
-    auto x_axis = bbox.xAxis();
-    auto y_axis = bbox.yAxis();
-    auto z_axis = bbox.zAxis();
-
-    double max_dim = std::max({
-        std::sqrt(x_axis[0]*x_axis[0] + x_axis[1]*x_axis[1] + x_axis[2]*x_axis[2]),
-        std::sqrt(y_axis[0]*y_axis[0] + y_axis[1]*y_axis[1] + y_axis[2]*y_axis[2]),
-        std::sqrt(z_axis[0]*z_axis[0] + z_axis[1]*z_axis[1] + z_axis[2]*z_axis[2])
-    });
-
-    if (level < 0) {
-        // For files without level info (root files), use box-based calculation
-        return max_dim * 2.0;
-    }
-
-    // Base error calculation:
-    // - Use max dimension as base for L16
-    // - Halve for each subsequent level
-    // This ensures larger tiles have larger geometric errors at the same LOD level
-    double base_error = max_dim * 2.0;
-    int level_diff = level - 16;
-
-    if (level_diff <= 0) {
-        return base_error;
-    }
-
-    return base_error / std::pow(2, level_diff);
-}
+// Old get_geometric_error has been replaced by calc_geometric_error (below)
+// which computes tile width directly from bounding box, independent of L numbering.
+// See calc_geometric_error() and convert_osg_tree_to_tile() for the current approach.
 
 std::string get_file_name(std::string path) {
     auto p0 = path.find_last_of("/\\");
@@ -1376,41 +1347,58 @@ tileset::Box extend_tile_box(osg_tree& tree) {
     return box;
 }
 
-void calc_geometric_error(osg_tree& tree) {
-    // depth first
+// Phase 1: bottom-up — compute bbox-based error for every tile
+// The geometric error should represent VISUAL error, not tile extent.
+// A coarse LOD tile introduces ~10% of its width as visual error.
+static void calc_bbox_errors(osg_tree& tree) {
     for (auto& i : tree.sub_nodes) {
-        calc_geometric_error(i);
+        calc_bbox_errors(i);
     }
-    if (tree.sub_nodes.empty()) {
-        // Use LOD level and bounding box-based geometric error for leaf nodes
-        int lvl = get_lvl_num(tree.file_name);
-        tree.geometricError = get_geometric_error(lvl, tree.bbox);
+    auto x_axis = tree.bbox.xAxis();
+    auto y_axis = tree.bbox.yAxis();
+    double w = 2.0 * std::sqrt(x_axis[0]*x_axis[0] + x_axis[1]*x_axis[1] + x_axis[2]*x_axis[2]);
+    double d = 2.0 * std::sqrt(y_axis[0]*y_axis[0] + y_axis[1]*y_axis[1] + y_axis[2]*y_axis[2]);
+    double tile_extent = std::max(w, d);
+    // Scale to visual error: a simplified LOD model of this tile typically
+    // introduces ~10% of its width as geometric deviation.
+    tree.geometricError = tile_extent * 0.1;
+}
+
+// Phase 2: top-down — propagate parent/2 down, capping at the tile's own bbox
+// This guarantees parent > child (LOD cascade) without exceeding real bbox.
+static void propagate_errors_down(osg_tree& tree, double parent_error) {
+    // This tile's error = min(own bbox, parent/2)
+    tree.geometricError = std::min(tree.geometricError, parent_error / 2.0);
+    for (auto& i : tree.sub_nodes) {
+        propagate_errors_down(i, tree.geometricError);
     }
-    else {
-        // For parent nodes, use the maximum child error * 2
-        // This ensures parent error is always larger than children's
-        std::vector<double> childErrors;
-        childErrors.reserve(tree.sub_nodes.size());
-        for (auto &sub_node : tree.sub_nodes) {
-            childErrors.push_back(sub_node.geometricError);
-        }
-        tree.geometricError = tileset::computeParentGeometricError(childErrors, 2.0);
+}
+
+void calc_geometric_error(osg_tree& tree) {
+    calc_bbox_errors(tree);
+    // Root uses its own bbox (no parent), children get parent/2 cascade
+    for (auto& i : tree.sub_nodes) {
+        propagate_errors_down(i, tree.geometricError);
     }
 }
 
 // Convert osg_tree to tileset::Tile for use with TilesetWriter
 tileset::Tile convert_osg_tree_to_tile(osg_tree& tree) {
-    // Create tile with bounding volume and geometric error
-    tileset::Tile tile(tree.bbox, tree.geometricError);
-
-    // 3D Tiles spec: A tile should have EITHER content OR children, not both
-    // If this node has children, it's an intermediate node - don't set content
-    // If this node has no children, it's a leaf node - set content
+    // For leaf tiles in the final tileset output, set geometricError to 0
+    // Cesium special-cases error=0: skips SSE computation, always renders.
+    // This is correct for leaves because there's nothing deeper to traverse to.
     bool has_children = !tree.sub_nodes.empty();
     bool is_leaf = !has_children;
+    double output_error = is_leaf ? 0.0 : tree.geometricError;
 
-    // Set content only for leaf nodes (type > 0 and no children)
-    if (is_leaf && tree.type > 0 && !tree.file_name.empty()) {
+    // Create tile with bounding volume and geometric error
+    tileset::Tile tile(tree.bbox, output_error);
+
+    // All tiles (including intermediates) need content for REPLACE refinement
+    // Parent has coarser model (content), children have finer models.
+    // Without content on intermediate tiles, Cesium has nothing to render
+    // and is forced to traverse all the way to leaves — defeating LOD.
+    if (tree.type > 0 && !tree.file_name.empty()) {
         std::string file_name = get_file_name(tree.file_name);
         std::string uri_path = "./" + file_name;
         std::string uri = replace(uri_path, ".osgb", tree.type != 2 ? ".b3dm" : "o.b3dm");

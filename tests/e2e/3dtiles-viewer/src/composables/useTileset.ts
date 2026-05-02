@@ -29,10 +29,9 @@ export function useTileset(viewer: Ref<Cesium.Viewer | null>) {
     try {
       const tilesetOptions: Cesium.Cesium3DTileset.ConstructorOptions = {
         maximumScreenSpaceError: options?.maximumScreenSpaceError ?? 16,
-        skipLevelOfDetail: options?.skipLevelOfDetail ?? true,
-        skipLevels: options?.skipLevels ?? 0,
-        immediatelyLoadDesiredLevelOfDetail: options?.immediatelyLoadDesiredLevelOfDetail ?? false,
-        loadSiblings: options?.loadSiblings ?? false,
+        skipLevelOfDetail: false,
+        immediatelyLoadDesiredLevelOfDetail: false,
+        loadSiblings: false,
         cullWithChildrenBounds: options?.cullWithChildrenBounds ?? true,
         dynamicScreenSpaceError: options?.dynamicScreenSpaceError ?? false,
       };

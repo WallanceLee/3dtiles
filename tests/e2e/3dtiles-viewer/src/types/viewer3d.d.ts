@@ -57,6 +57,12 @@ export interface PerformanceMetrics {
   memory: number;
   tiles: number;
   cacheSize: number;
+  tilesTotal: number;
+  tilesLoaded: number;
+  tilesVisible: number;
+  tilesRendered: number;
+  rootSSE: number;
+  currentGeometricError: number;
 }
 
 export interface InspectorState {

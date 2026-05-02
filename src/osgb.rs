@@ -200,7 +200,14 @@ pub fn osgb_batch_convert(
     root_box[4] -= gap_extension;  // min_y
     root_box[5] -= gap_extension;  // min_z
 
-    //let root_geometric_error = get_geometric_error(center_y, 10);
+    // Compute root geometric error from scene bounding box (horizontal extent)
+    // This matches WMTS convention: root error = scene width = tileset's own footprint
+    // NOT 2x max child error — that would force Cesium to always traverse down
+    let scene_width = root_box[0] - root_box[3];   // max_x - min_x
+    let scene_depth = root_box[1] - root_box[4];   // max_y - min_y
+    let scene_height = root_box[2] - root_box[5];  // max_z - min_z
+    let root_geometric_error = scene_width.max(scene_depth).max(scene_height);
+    info!("Root geometricError from scene extent: {} (scene {:.0}x{:.0}m)", root_geometric_error, scene_width, scene_depth);
     // Use origin height: priority: origin_height > enu_offset.2 > region_offset calculation
     let tras_height = if let Some(h) = origin_height {
         h
@@ -227,13 +234,13 @@ pub fn osgb_batch_convert(
                 "version": "1.0",
                 "gltfUpAxis": "Z"
             },
-            "geometricError": root_geometric_error * 2.0,
+            "geometricError": root_geometric_error,
             "root" : {
                 "transform" : trans_vec,
                 "boundingVolume" : {
                     "box": box_to_tileset_box(&root_box)
                 },
-                "geometricError": root_geometric_error * 2.0,
+                "geometricError": root_geometric_error,
                 "children": []
             }
         }
